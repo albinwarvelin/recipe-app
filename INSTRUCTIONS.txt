@@ -1,0 +1,7 @@
+Milestone 1 scaffold
+
+1. Configure a Cloudflare Access application restricted to the owner email.
+2. Create a D1 database and replace only deployment-local values in Wrangler configuration.
+3. Implement JWKS-backed Cloudflare Access JWT validation in worker/auth/access.ts.
+4. Add protected owner-only routes and security tests before adding recipe data.
+5. Keep local-first IndexedDB writes and the outbox transactional when Milestone 3 begins.
