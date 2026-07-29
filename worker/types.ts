@@ -1,4 +1,5 @@
 export interface Env {
+  ASSETS?: Fetcher;
   DB: D1Database;
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUDIENCE: string;
@@ -6,6 +7,8 @@ export interface Env {
   ALLOWED_ORIGINS: string;
 }
 
-export interface AuthenticatedRequest extends Request {
-  ownerEmail?: string;
+export interface AuthIdentity {
+  email: string;
+  subject: string;
+  audience: string[];
 }

@@ -10,17 +10,18 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "worker:dev": "wrangler dev worker/index.ts",
-    "worker:deploy": "wrangler deploy worker/index.ts"
+    "worker:deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "dexie": "^4.0.8",
+    "jose": "^6.0.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.6.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250718.0",
+    "@cloudflare/workers-types": "^5.20260722.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.1",

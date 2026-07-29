@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import worker from '../../worker/index';
 
 const env = {
+  ASSETS: undefined,
   DB: {} as D1Database,
   ACCESS_TEAM_DOMAIN: 'team.example.com',
   ACCESS_AUDIENCE: 'audience',
@@ -17,7 +18,7 @@ describe('API security boundary', () => {
 
   it('does not allow unknown API routes anonymously', async () => {
     const response = await worker.fetch(new Request('https://recipes.example/api/recipes'), env);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(401);
   });
 
   it('rejects unexpected origins', async () => {
