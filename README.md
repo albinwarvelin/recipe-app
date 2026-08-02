@@ -4,7 +4,7 @@ Private, single-user, local-first recipe PWA.
 
 ## Status
 
-This repository contains the Milestone 1 project outline and a fail-closed security boundary. The browser shell is intentionally minimal. The Worker does not accept tokens until Cloudflare Access JWT validation is implemented.
+This repository contains the Milestone 1 project outline and a fail-closed security boundary. The browser shell is intentionally minimal. Cloudflare Access authenticates users, and the Worker independently validates each Access JWT before serving API data.
 
 ## Structure
 
@@ -27,4 +27,4 @@ Copy `.env.example` or `.dev.vars.example` for local placeholders. Never commit 
 
 ## Security note
 
-The static app shell may be public, but all `/api/*` routes are private by default. Recipe data must not be placed in static assets. Before adding data routes, implement and test Cloudflare Access JWT signature, issuer, audience, expiration, not-before, and approved-owner validation.
+The static app shell contains no private data, and all `/api/*` routes are private by default. Recipe data must not be placed in static assets. The Worker validates Cloudflare Access JWT signature, issuer, audience, expiration, not-before, subject, and the approved-email allowlist.

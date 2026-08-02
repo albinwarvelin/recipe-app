@@ -6,17 +6,18 @@
 	"assets": {
 		"directory": "./dist",
 		"not_found_handling": "single-page-application",
-		"binding": "ASSETS"
+		"binding": "ASSETS",
+		"run_worker_first": true
 	},
 	"vars": {
 		"ACCESS_TEAM_DOMAIN": "https://albinw.cloudflareaccess.com",
 		"ACCESS_AUDIENCE": "3cc219af73b00832571e118b7d7ba254ea542616b993c7b09db6ad940cbe25d8",
-		"OWNER_EMAIL": "albin.warvelin@gmail.com",
+		"APPROVED_EMAILS": "albin.warvelin@gmail.com",
 		"ALLOWED_ORIGINS": "http://localhost:5173"
 	},
 	"d1_databases": [
 		{
-			"binding": "recipe_app",
+			"binding": "DB",
 			"database_name": "recipe-app",
 			"database_id": "8f684462-2531-4976-add2-df900da6a050",
 			"remote": false

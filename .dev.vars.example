@@ -1,4 +1,4 @@
 ACCESS_TEAM_DOMAIN=https://your-team.cloudflareaccess.com
 ACCESS_AUDIENCE=your-access-application-audience
-OWNER_EMAIL=owner@example.com
+APPROVED_EMAILS=owner@example.com,alternate-owner@example.com
 ALLOWED_ORIGINS=http://localhost:5173

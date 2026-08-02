@@ -9,6 +9,7 @@
     "lint": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
+    "worker:types": "wrangler types worker/env.d.ts --strict-vars=false --include-runtime=false",
     "worker:dev": "wrangler dev worker/index.ts",
     "worker:deploy": "npm run build && wrangler deploy"
   },

@@ -1,12 +1,27 @@
-export function HomePage() {
+interface HomePageProps {
+  email: string;
+}
+
+export function HomePage({ email }: HomePageProps) {
   return (
-    <section className="empty-state" aria-labelledby="welcome-heading">
-      <div className="empty-state-icon" aria-hidden="true">✦</div>
-      <h2 id="welcome-heading">Your recipes, wherever you are.</h2>
-      <p>The secure local-first recipe library is ready for its first feature milestone.</p>
-      <button type="button" className="primary-button" disabled>
-        Add recipe — coming next
-      </button>
-    </section>
+    <div className="app-shell">
+      <header className="navigation-bar">
+        <div>
+          <p className="eyebrow">Private kitchen</p>
+          <h1>Recipes</h1>
+        </div>
+        <span className="sync-indicator" aria-label="Authentication status: signed in">Secure</span>
+      </header>
+      <main className="page-content">
+        <section className="empty-state" aria-labelledby="welcome-heading">
+          <div className="empty-state-icon" aria-hidden="true">✦</div>
+          <h2 id="welcome-heading">Welcome home.</h2>
+          <p>You are signed in as {email}. Your recipe library will appear here.</p>
+          <a className="secondary-button" href="/cdn-cgi/access/logout">
+            Sign out
+          </a>
+        </section>
+      </main>
+    </div>
   );
 }

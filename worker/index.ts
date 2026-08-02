@@ -1,4 +1,3 @@
-import type { Env } from './types';
 import { requireAccessIdentity } from './auth/access';
 import { allowedOrigin, applySecurityHeaders } from './middleware/security';
 import { requestId, error } from './http';
@@ -21,7 +20,18 @@ export default {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
       if (!origin || request.headers.get('X-Requested-With') !== 'RecipeApp') return applySecurityHeaders(error('CSRF_CHECK_FAILED', 'A same-origin request marker is required.', 403, id), origin);
     }
-    if (url.pathname === '/api/health') return applySecurityHeaders(Response.json({ ok: true, owner: identity.email }, { headers: { 'X-Request-ID': id } }), origin);
+    if (url.pathname === '/api/session') {
+      return applySecurityHeaders(Response.json(
+        { authenticated: true, identity: { email: identity.email } },
+        { headers: { 'Cache-Control': 'no-store', 'X-Request-ID': id } }
+      ), origin);
+    }
+    if (url.pathname === '/api/health') {
+      return applySecurityHeaders(Response.json(
+        { ok: true },
+        { headers: { 'Cache-Control': 'no-store', 'X-Request-ID': id } }
+      ), origin);
+    }
     if (url.pathname === '/api/recipes' || url.pathname.startsWith('/api/recipes/')) return applySecurityHeaders(await recipeRoute(request, env, id), origin);
     return applySecurityHeaders(error('NOT_FOUND', 'Route was not found.', 404, id), origin);
   }

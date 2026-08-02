@@ -1,4 +1,3 @@
-import type { Env } from '../types';
 import { error, json, readJson } from '../http';
 import { recipeInputSchema, recipePatchSchema, type RecipeInput, type RecipePatch } from '../validation/recipes';
 

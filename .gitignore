@@ -8,4 +8,4 @@ dist/
 !.dev.vars.example
 coverage/
 *.tsbuildinfo
-AGENTS.md
+agent_docs/

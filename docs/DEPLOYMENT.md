@@ -65,7 +65,7 @@ In the Cloudflare dashboard:
 4. Enable only the identity provider you intend to use. Email OTP is acceptable for a private single-user app; an existing Google/GitHub/Microsoft identity provider is also possible.
 5. Copy the application’s **Application Audience (AUD) Tag**.
 6. Set `ACCESS_TEAM_DOMAIN` to the full team URL, such as `https://my-team.cloudflareaccess.com`.
-7. Set `ACCESS_AUDIENCE` to the AUD tag and `OWNER_EMAIL` to the exact approved email.
+7. Set `ACCESS_AUDIENCE` to the AUD tag and `APPROVED_EMAILS` to a comma-separated list of exact approved email addresses.
 
 Cloudflare Access is the outer gate. The Worker independently verifies the `Cf-Access-Jwt-Assertion` signature through the rotating Access JWKS endpoint, then checks issuer, audience, expiration, not-before, algorithm, subject, and the approved owner email.
 

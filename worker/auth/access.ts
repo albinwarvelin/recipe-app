@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
-import type { AuthIdentity, Env } from '../types';
+import type { AuthIdentity } from '../types';
 
 const ACCESS_TOKEN_HEADER = 'Cf-Access-Jwt-Assertion';
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -36,6 +36,15 @@ function audiences(payload: JWTPayload): string[] {
     : [];
 }
 
+export function isApprovedEmail(email: string, configuredEmails: string): boolean {
+  const normalizedEmail = email.trim().toLowerCase();
+  return configuredEmails
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(normalizedEmail);
+}
+
 export async function requireAccessIdentity(request: Request, env: Env): Promise<AuthIdentity> {
   const token = request.headers.get(ACCESS_TOKEN_HEADER);
   if (!token) throw authResponse(401);
@@ -62,7 +71,7 @@ export async function requireAccessIdentity(request: Request, env: Env): Promise
 
     const email = claimEmail(payload);
     const subject = typeof payload.sub === 'string' ? payload.sub : undefined;
-    if (!email || !subject || email !== env.OWNER_EMAIL.trim().toLowerCase()) throw authResponse(403);
+    if (!email || !subject || !isApprovedEmail(email, env.APPROVED_EMAILS)) throw authResponse(403);
 
     return { email, subject, audience: audiences(payload) };
   } catch (error) {
