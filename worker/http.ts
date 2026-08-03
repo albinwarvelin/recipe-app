@@ -8,8 +8,10 @@ export function json<T>(body: T, status = 200, id?: string): Response {
   return response;
 }
 
-export function error(code: string, message: string, status: 400 | 401 | 403 | 404 | 405 | 409 | 413 | 422 | 429, id: string): Response {
-  return json({ error: { code, message, requestId: id } }, status, id);
+export type ErrorStatus = 400 | 401 | 403 | 404 | 405 | 409 | 413 | 422 | 429 | 500;
+
+export function error(code: string, message: string, status: ErrorStatus, id: string, details?: unknown): Response {
+  return json({ error: { code, message, requestId: id, ...(details === undefined ? {} : { details }) } }, status, id);
 }
 
 export async function readJson(request: Request, id: string): Promise<unknown | Response> {

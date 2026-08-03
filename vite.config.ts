@@ -19,7 +19,12 @@ export default defineConfig({
         icons: []
       },
       workbox: {
-        navigateFallback: '/index.html',
+        // The complete deployment is protected by Cloudflare Access. HTML
+        // navigations must reach Access so it can issue/refresh authorization
+        // cookies; a cached SPA shell would mask the login page.
+        navigateFallback: null,
+        globIgnores: ['**/index.html'],
+        cleanupOutdatedCaches: true,
         runtimeCaching: []
       }
     })

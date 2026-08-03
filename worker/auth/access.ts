@@ -4,16 +4,25 @@ import type { AuthIdentity } from '../types';
 const ACCESS_TOKEN_HEADER = 'Cf-Access-Jwt-Assertion';
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-function authResponse(status: 401 | 403): Response {
+function authResponse(status: 401 | 403, requestId?: string): Response {
   return Response.json(
     {
       error: {
         code: status === 401 ? 'UNAUTHENTICATED' : 'FORBIDDEN',
         message: status === 401 ? 'Authentication is required.' : 'The authenticated identity is not allowed.',
+        ...(requestId ? { requestId } : {}),
       },
     },
     { status }
   );
+}
+
+export function audienceForRequest(request: Request, env: Env): string | undefined {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  const productionHostname = env.PRODUCTION_HOSTNAME.trim().toLowerCase();
+  if (hostname === productionHostname) return env.ACCESS_PRODUCTION_AUDIENCE;
+  if (hostname.endsWith(`-${productionHostname}`)) return env.ACCESS_PREVIEW_AUDIENCE;
+  return undefined;
 }
 
 function issuerFromEnvironment(env: Env): string {
@@ -45,16 +54,19 @@ export function isApprovedEmail(email: string, configuredEmails: string): boolea
     .includes(normalizedEmail);
 }
 
-export async function requireAccessIdentity(request: Request, env: Env): Promise<AuthIdentity> {
+export async function requireAccessIdentity(request: Request, env: Env, requestId?: string): Promise<AuthIdentity> {
   const token = request.headers.get(ACCESS_TOKEN_HEADER);
-  if (!token) throw authResponse(401);
+  if (!token) throw authResponse(401, requestId);
 
   let issuer: string;
   try {
     issuer = issuerFromEnvironment(env);
   } catch {
-    throw authResponse(403);
+    throw authResponse(403, requestId);
   }
+
+  const audience = audienceForRequest(request, env);
+  if (!audience) throw authResponse(403, requestId);
 
   try {
     let jwks = jwksByIssuer.get(issuer);
@@ -64,18 +76,18 @@ export async function requireAccessIdentity(request: Request, env: Env): Promise
     }
     const { payload } = await jwtVerify(token, jwks, {
       issuer,
-      audience: env.ACCESS_AUDIENCE,
+      audience,
       algorithms: ['RS256'],
       clockTolerance: 5,
     });
 
     const email = claimEmail(payload);
     const subject = typeof payload.sub === 'string' ? payload.sub : undefined;
-    if (!email || !subject || !isApprovedEmail(email, env.APPROVED_EMAILS)) throw authResponse(403);
+    if (!email || !subject || !isApprovedEmail(email, env.APPROVED_EMAILS)) throw authResponse(403, requestId);
 
     return { email, subject, audience: audiences(payload) };
   } catch (error) {
     if (error instanceof Response) throw error;
-    throw authResponse(403);
+    throw authResponse(403, requestId);
   }
 }

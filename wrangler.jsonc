@@ -2,7 +2,10 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "recipe-app-api",
 	"main": "worker/index.ts",
-	"compatibility_date": "2026-07-28",
+	"compatibility_date": "2026-08-02",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"preview_urls": true,
 	"assets": {
 		"directory": "./dist",
 		"not_found_handling": "single-page-application",
@@ -11,9 +14,16 @@
 	},
 	"vars": {
 		"ACCESS_TEAM_DOMAIN": "https://albinw.cloudflareaccess.com",
-		"ACCESS_AUDIENCE": "3cc219af73b00832571e118b7d7ba254ea542616b993c7b09db6ad940cbe25d8",
+		"ACCESS_PRODUCTION_AUDIENCE": "99a744d743d19671b5e0f95195d5aeff3b2a03a835cc5a1955bbd9d94e379a40",
+		"ACCESS_PREVIEW_AUDIENCE": "6671077a07ef0bc65b4a8cd552effde9bba26fd3ba45e0b77dfa20693b67e150",
+		"PRODUCTION_HOSTNAME": "recipe-app-api.albin-warvelin.workers.dev",
 		"APPROVED_EMAILS": "albin.warvelin@gmail.com",
 		"ALLOWED_ORIGINS": "http://localhost:5173"
+	},
+	"observability": {
+		"enabled": true,
+		"logs": { "enabled": true, "head_sampling_rate": 0.1 },
+		"traces": { "enabled": true, "head_sampling_rate": 0.01 }
 	},
 	"d1_databases": [
 		{

@@ -4,11 +4,13 @@ import worker from '../../worker/index';
 const env = {
   ASSETS: {} as Fetcher,
   DB: {} as D1Database,
-  ACCESS_TEAM_DOMAIN: 'team.example.com',
-  ACCESS_AUDIENCE: 'audience',
+  ACCESS_TEAM_DOMAIN: 'https://team.example.com',
+  ACCESS_PRODUCTION_AUDIENCE: 'production-audience',
+  ACCESS_PREVIEW_AUDIENCE: 'preview-audience',
+  PRODUCTION_HOSTNAME: 'recipes.example',
   APPROVED_EMAILS: 'owner@example.com,alternate-owner@example.com',
   ALLOWED_ORIGINS: 'http://localhost:5173'
-};
+} satisfies Env;
 
 describe('API security boundary', () => {
   it('rejects an unauthenticated API request', async () => {

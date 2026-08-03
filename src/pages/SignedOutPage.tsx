@@ -6,7 +6,7 @@ export function SignedOutPage() {
         <p className="eyebrow">Private kitchen</p>
         <h1 id="sign-in-heading">Sign in to Recipes</h1>
         <p>Cloudflare Access verifies your identity before any private data is loaded.</p>
-        <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+        <button className="primary-button" type="button" onClick={() => window.location.assign('/')}>
           Continue to Cloudflare Access
         </button>
       </section>

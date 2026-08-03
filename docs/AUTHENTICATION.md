@@ -2,46 +2,36 @@
 
 ## Production flow
 
-The production `workers.dev` Worker must be protected with Cloudflare Access.
+Both the production Worker URL and version preview URLs are restricted by Cloudflare Access.
 
 ```text
-Signed out browser
-  -> Cloudflare Access login page
-  -> identity provider or email one-time PIN
+Signed-out browser
+  -> Cloudflare Access email one-time PIN
   -> Access Allow policy
-  -> Worker validates Cf-Access-Jwt-Assertion
+  -> Access adds Cf-Access-Jwt-Assertion
+  -> Worker verifies the JWT and owner email
   -> React checks /api/session
-  -> placeholder home
+  -> recipe tester loads
 ```
 
-Cloudflare Access stores the session in its authorization cookie. The React app does not read, copy, or store the JWT. The browser sends the cookie automatically and Cloudflare adds `Cf-Access-Jwt-Assertion` to the request delivered to the Worker.
+Cloudflare owns the authorization cookie. React never reads, copies, or stores the JWT. HTML navigations are deliberately excluded from the service-worker precache so a signed-out visit always reaches Access before the application shell is served. The React signed-out screen covers an already open application whose Access session expires.
 
-The fallback React sign-in screen is used only if a cached application shell is open after the Access session expires, or when the API returns `401` or `403`. In a normal online signed-out visit, Access intercepts the request before React loads.
+## Two Access audiences
+
+Production and preview URLs have separate Access applications and audience tags. The Worker selects exactly one expected audience from the request host:
+
+- exact `recipe-app-api.albin-warvelin.workers.dev` host: `ACCESS_PRODUCTION_AUDIENCE`
+- `<version-or-alias>-recipe-app-api.albin-warvelin.workers.dev`: `ACCESS_PREVIEW_AUDIENCE`
+- any other host: fail closed
+
+The Worker never accepts both tags for one request. This prevents a valid preview token from being treated as a production token. `PRODUCTION_HOSTNAME` defines the host boundary.
 
 ## Approved identities
 
-`APPROVED_EMAILS` is a comma-separated allowlist. Every email must also be included in the Cloudflare Access Allow policy.
+`APPROVED_EMAILS` is a comma-separated backend allowlist. Every address must also be allowed by the two Cloudflare Access policies. Multiple addresses are alternate trusted identities for one recipe library, not separate users.
 
-```text
-APPROVED_EMAILS=owner@example.com,alternate-owner@example.com
-```
-
-Multiple approved emails are alternate trusted identities for the same single-user recipe library. They are not separate application users and they all see the same data. Public self-registration and separate per-user recipe data are intentionally not implemented.
+The complete API validation is: RS256 signature through the team JWKS endpoint, issuer, host-selected audience, expiration, not-before, subject, email claim, and `APPROVED_EMAILS`.
 
 ## Logout
 
-The application links to:
-
-```text
-/cdn-cgi/access/logout
-```
-
-Cloudflare clears the application authorization session. Previously issued tokens may take a short period to stop being accepted at every edge location.
-
-## Security boundary
-
-- Cloudflare Access is the outer authentication gate.
-- The Worker independently validates signature, issuer, audience, time claims, subject, and approved email.
-- Every `/api/*` route is authenticated before route handling.
-- React authentication state is user experience only; it is not trusted for authorization.
-- No token is stored in `localStorage`, `sessionStorage`, IndexedDB, or application state.
+The UI links to `/cdn-cgi/access/logout`. Cloudflare clears the Access authorization session; the app stores no separate login session.

@@ -1,4 +1,6 @@
 ACCESS_TEAM_DOMAIN=https://your-team.cloudflareaccess.com
-ACCESS_AUDIENCE=your-access-application-audience
+ACCESS_PRODUCTION_AUDIENCE=your-production-access-application-audience
+ACCESS_PREVIEW_AUDIENCE=your-preview-access-application-audience
+PRODUCTION_HOSTNAME=your-worker.your-subdomain.workers.dev
 APPROVED_EMAILS=owner@example.com,alternate-owner@example.com
 ALLOWED_ORIGINS=http://localhost:5173

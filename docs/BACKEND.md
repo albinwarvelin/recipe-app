@@ -1,23 +1,49 @@
 # Backend implementation notes
 
-## Current routes
+All `/api/*` routes require a verified Cloudflare Access JWT and approved owner email.
 
-All routes under `/api/` require a valid Cloudflare Access application JWT. Current routes are:
+## Routes
 
+- `GET /api/session`
 - `GET /api/health`
 - `GET /api/recipes`
 - `GET /api/recipes/:id`
 - `POST /api/recipes`
-- `PATCH /api/recipes/:id`
-- `PUT /api/recipes/:id`
-- `DELETE /api/recipes/:id`
+- `PUT /api/recipes/:id` — full replacement
+- `PATCH /api/recipes/:id` — partial replacement
+- `DELETE /api/recipes/:id` — soft deletion
+- `GET /api/tags`
+- `POST /api/tags`
+- `GET /api/sync/changes?cursor=0&limit=100`
+- `POST /api/sync`
 
-Writes require `Content-Type: application/json`, an `X-Requested-With: RecipeApp` marker, and a stable `Idempotency-Key` for creates. The marker is a defense-in-depth CSRF check; same-origin requests from the application can send it, while a normal cross-origin HTML form cannot.
+Recipe responses contain ordered `ingredients`, ordered `instructions`, and `tags`. A supplied child/tag array replaces that collection. Tags are unique case-insensitively while retaining the first stored display casing.
 
-## Important next backend work
+## Write contract
 
-1. Add base-version checks to PATCH/PUT and return `409 CONFLICT` instead of silently overwriting.
-2. Add idempotency records for update and delete operations, not only creates.
-3. Add ingredients, instructions, tags, and recipe relationships in migrations and transactions.
-4. Add rate limiting at the Cloudflare edge or a durable rate-limit design for import, sync, and export.
-5. Add the Dexie schema and transactional outbox before building optimistic recipe editing in the UI.
+Every write requires:
+
+- `Content-Type: application/json`
+- `X-Requested-With: RecipeApp`
+- `Idempotency-Key` containing a UUID
+- a same-origin or configured `Origin`
+
+Update, replacement, and delete bodies require `base_version`. A stale version returns `409 VERSION_CONFLICT` with `error.details.current`, and nothing is overwritten. DELETE uses a JSON body: `{ "base_version": 3 }`.
+
+Processed operations store method, path, a canonical SHA-256 request fingerprint, response status, and response JSON. Repeating the same operation returns the stored success with `Idempotency-Replayed: true`; reusing its key for a different request returns `409 IDEMPOTENCY_KEY_REUSE`. The domain write, change event, and processed-operation record are committed in one D1 batch.
+
+## Sync contract
+
+`GET /api/sync/changes` returns integer-sequenced changes and `next_cursor`. Multiple events for one recipe within a page collapse to the newest state. Deleted records return a tombstone with `recipe: null`.
+
+`POST /api/sync` accepts up to 50 ordered operations:
+
+- create: `{ operation_id, type: "create", payload }`
+- update: `{ operation_id, type: "update", entity_id, payload: { base_version, ...changes } }`
+- delete: `{ operation_id, type: "delete", entity_id, base_version }`
+
+Operations execute sequentially and each result includes its own status/body. Each `operation_id` is the durable idempotency identity. The request also requires an outer idempotency header as a defense-in-depth write contract marker.
+
+## Deliberately excluded for now
+
+URL scraping, JSON import/export, image/R2 handling, and the browser’s persistent Dexie outbox are not part of this backend increment.

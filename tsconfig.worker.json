@@ -7,8 +7,9 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"],
     "skipLibCheck": true
   },
-  "include": ["worker", "tests"]
+  "include": ["worker", "tests"],
+  "exclude": ["tests/unit/session.test.ts"]
 }

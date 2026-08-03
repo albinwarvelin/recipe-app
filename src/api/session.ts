@@ -15,10 +15,14 @@ export async function getSession(signal?: AbortSignal): Promise<SessionResult> {
     const response = await fetch('/api/session', {
       method: 'GET',
       credentials: 'same-origin',
+      redirect: 'manual',
       headers: { Accept: 'application/json' },
       signal,
     });
 
+    if (response.type === 'opaqueredirect' || response.status === 0 || response.status === 302) {
+      return { status: 'signed-out' };
+    }
     if (response.status === 401 || response.status === 403) return { status: 'signed-out' };
     if (!response.ok || !response.headers.get('Content-Type')?.includes('application/json')) {
       return { status: 'error' };

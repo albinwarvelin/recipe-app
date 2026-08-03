@@ -1,133 +1,68 @@
 # Local development and Cloudflare deployment
 
-## The mental model
+## Deployment shape
 
-This repository has two logical applications in one deployable project:
+Vite builds `src/` into `dist/`. One Worker serves those assets and handles relative `/api/*` calls, so the frontend and API share `https://recipe-app-api.albin-warvelin.workers.dev`. D1 is available only through the Worker binding.
 
-```text
-src/ + Vite                       worker/
-React UI and PWA shell             API, Access validation, D1 queries
-        │                                   │
-        └────────── same Worker hostname ───┘
-                         │
-                    Cloudflare Access
-                         │
-                     Cloudflare D1
-```
+Cloudflare Access is the outer gate for the whole production URL and all preview URLs. The Worker is the inner gate for every API route. The static shell contains no private recipe data.
 
-The frontend is compiled into `dist/`. The Worker handles `/api/*` and serves the compiled static assets for every other path. This keeps the browser app and server code separate in source and in security responsibilities, while avoiding cross-origin cookie and CORS complexity for the first production deployment.
+The service worker may precache replaceable JavaScript, CSS, and manifest assets, but it must not precache `index.html` or intercept navigations. Otherwise a cached shell can mask the Access login page and leave API requests trapped in a pre-Worker `302` loop.
 
-The frontend must never contain D1 bindings, Access secrets, signing keys, or private recipe data. It calls relative URLs such as `/api/recipes`. The Worker is the only code that can access D1.
+## Access configuration
 
-Later, the frontend can be moved to Cloudflare Pages or a second Worker without changing the backend design. At that point, set the production frontend origin in `ALLOWED_ORIGINS` and keep the API hostname protected by its own Access application.
+The Cloudflare dashboard must keep both **Production** and **Preview** Worker URLs restricted. Both Access applications should:
 
-## One-time account setup
+1. allow only the exact owner email address;
+2. use email one-time PIN as the login method;
+3. use the intended Access session lifetime;
+4. remain enabled after each deployment.
 
-Install Node.js, then authenticate Wrangler:
+`wrangler.jsonc` explicitly keeps `workers_dev` and `preview_urls` enabled and contains separate production/preview AUD tags. These values and the owner email are identifiers/configuration, not authentication secrets. Do not store Access cookies or JWTs.
+
+## Local checks
 
 ```sh
 npm install
+npm run worker:types
+npx wrangler d1 migrations apply recipe-app --local
+npm run lint
+npm test
+npm run build
+npx wrangler deploy --dry-run
+```
+
+The Node suite checks JWT and boundary behavior. The Workers Vitest suite runs the recipe data layer against local D1 with all migrations applied.
+
+Local requests without a valid Access assertion fail closed. Do not add a development authentication bypass. The deployed app is the practical end-to-end test target for the temporary frontend.
+
+## Production release
+
+Authenticate Wrangler without placing an API token in the repository:
+
+```sh
 npx wrangler login
 npx wrangler whoami
 ```
 
-The browser login grants Wrangler access to the selected Cloudflare account. Do not put an API token in the repository.
-
-Create the production D1 database:
+Then apply schema before code:
 
 ```sh
-npx wrangler d1 create recipe-app
-```
-
-Copy the returned `database_id` into `wrangler.jsonc`. The `DB` binding in that file is what makes the database available to the Worker as `env.DB`.
-
-Apply the versioned schema locally first:
-
-```sh
-npx wrangler d1 migrations apply recipe-app --local
-```
-
-Apply it to the real Cloudflare database only when ready:
-
-```sh
+npx wrangler d1 migrations list recipe-app --remote
 npx wrangler d1 migrations apply recipe-app --remote
-```
-
-Never edit a migration that has already been applied remotely. Add a new numbered migration instead.
-
-## Configure Cloudflare Access
-
-In the Cloudflare dashboard:
-
-1. Open **Zero Trust → Access controls → Applications**.
-2. Create a **Self-hosted** application with the public hostname you will use for this app, for example `recipes.example.com`.
-3. Add an **Allow** policy with **Include → Email → your exact owner email**.
-4. Enable only the identity provider you intend to use. Email OTP is acceptable for a private single-user app; an existing Google/GitHub/Microsoft identity provider is also possible.
-5. Copy the application’s **Application Audience (AUD) Tag**.
-6. Set `ACCESS_TEAM_DOMAIN` to the full team URL, such as `https://my-team.cloudflareaccess.com`.
-7. Set `ACCESS_AUDIENCE` to the AUD tag and `APPROVED_EMAILS` to a comma-separated list of exact approved email addresses.
-
-Cloudflare Access is the outer gate. The Worker independently verifies the `Cf-Access-Jwt-Assertion` signature through the rotating Access JWKS endpoint, then checks issuer, audience, expiration, not-before, algorithm, subject, and the approved owner email.
-
-For local Worker development, use placeholder values in `.dev.vars` only. A real Access token is normally obtained by visiting the deployed hostname through Access; local requests without a token should remain unauthorized. Do not add a development bypass to production code.
-
-## Local development
-
-Run the browser and Worker in separate terminals:
-
-```sh
-npm run dev
-npm run worker:dev
-```
-
-Vite serves the UI on `http://localhost:5173`. Wrangler serves the Worker, normally on `http://localhost:8787`. For the first same-origin production deployment, the browser should call the deployed Worker URL. During local development, a Vite proxy can be added later so `/api` forwards to Wrangler without changing frontend code.
-
-Use local D1 while developing:
-
-```sh
-npx wrangler d1 migrations apply recipe-app --local
-npx wrangler dev worker/index.ts
-```
-
-Local D1 data is separate from the remote database.
-
-## Deploying the application
-
-Build the React app and deploy the Worker plus `dist/` assets:
-
-```sh
 npm run build
 npx wrangler deploy
 ```
 
-The Worker receives `DB` and `ASSETS` bindings from `wrangler.jsonc`. Cloudflare serves the static PWA shell through `ASSETS`; requests beginning with `/api/` stay inside the Worker API router.
+Never edit a migration already applied remotely; add the next numbered migration. After deployment, verify while signed out that `/` and `/api/session` redirect to Access, then sign in with the approved email and exercise create, edit, favorite, conflict-sensitive delete, and the change cursor.
 
-After deployment:
+Logs can be observed with:
 
 ```sh
 npx wrangler tail recipe-app-api
 ```
 
-Then open the production hostname in a browser, complete Access login, and verify that `/api/health` succeeds only for the approved owner. Do not log JWTs or recipe bodies.
+Worker logs include request ID, method, route, status, and duration, but never JWTs, emails, request bodies, or recipe content.
 
-## Configuration and secrets
+## Future secrets
 
-The current values are non-secret configuration: hostname, audience, owner email, and allowed origins. They may be stored as Wrangler variables, but production values should be set deliberately per environment. If a future integration needs a secret, use a Worker secret:
-
-```sh
-npx wrangler secret put SOME_SECRET
-```
-
-Never put that value in `wrangler.jsonc`, frontend code, `.env`, or Git.
-
-## Production shape
-
-The launch sequence is:
-
-1. Vite compiles `src/` to static files in `dist/`.
-2. Wrangler uploads the Worker and the `dist/` files.
-3. A request reaches the Cloudflare hostname.
-4. Access authenticates the browser and adds the application JWT on origin requests.
-5. The Worker validates that JWT for every `/api/*` request.
-6. Authenticated Worker code validates input and queries D1 with parameterised statements.
-7. The PWA caches replaceable app-shell assets; recipe records will later be stored in IndexedDB and D1, never in the public asset bundle.
+If a future integration needs a secret, use `npx wrangler secret put NAME`. Never place secret values in `wrangler.jsonc`, frontend variables, `.env`, or Git.
