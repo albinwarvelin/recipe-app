@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "dexie": "^4.0.8",
+    "heic-to": "^1.5.2",
     "jose": "^6.0.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -28,6 +29,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.1",
+    "fake-indexeddb": "^6.2.5",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^0.21.1",

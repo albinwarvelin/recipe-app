@@ -11,6 +11,7 @@ let privateKey: CryptoKey;
 const env = {
   ASSETS: {} as Fetcher,
   DB: {} as D1Database,
+  IMAGES: {} as R2Bucket,
   ACCESS_TEAM_DOMAIN: issuer,
   ACCESS_PRODUCTION_AUDIENCE: audience,
   ACCESS_PREVIEW_AUDIENCE: 'preview-audience',

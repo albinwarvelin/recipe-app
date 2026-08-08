@@ -333,7 +333,7 @@ interface ChangeRow {
   deleted: number;
 }
 
-export async function recipeChanges(db: D1Database, cursor: number, limit: number): Promise<{ changes: unknown[]; next_cursor: number }> {
+export async function recipeChanges(db: D1Database, cursor: number, limit: number): Promise<{ changes: unknown[]; next_cursor: number; has_more: boolean }> {
   const result = await db.prepare('SELECT sequence, recipe_id, recipe_version, changed_at, deleted FROM recipe_changes WHERE sequence > ?1 ORDER BY sequence LIMIT ?2').bind(cursor, limit).all<ChangeRow>();
   const latestByRecipe = new Map<string, ChangeRow>();
   for (const change of result.results) latestByRecipe.set(change.recipe_id, change);
@@ -345,5 +345,5 @@ export async function recipeChanges(db: D1Database, cursor: number, limit: numbe
     deleted: change.deleted === 1,
     recipe: change.deleted === 1 ? null : await getRecipe(db, change.recipe_id),
   })));
-  return { changes, next_cursor: result.results.at(-1)?.sequence ?? cursor };
+  return { changes, next_cursor: result.results.at(-1)?.sequence ?? cursor, has_more: result.results.length === limit };
 }

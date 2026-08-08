@@ -6,26 +6,26 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Recipe App',
         short_name: 'Recipes',
         description: 'A private, local-first recipe library.',
-        theme_color: '#f7f7f8',
-        background_color: '#f7f7f8',
+        theme_color: '#f4f2ee',
+        background_color: '#f4f2ee',
         display: 'standalone',
         start_url: '/',
-        icons: []
+        icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
       },
-      workbox: {
-        // The complete deployment is protected by Cloudflare Access. HTML
-        // navigations must reach Access so it can issue/refresh authorization
-        // cookies; a cached SPA shell would mask the login page.
-        navigateFallback: null,
-        globIgnores: ['**/index.html'],
-        cleanupOutdatedCaches: true,
-        runtimeCaching: []
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,webmanifest}'],
+        // The lazy HEIC decoder is intentionally cached so Apple photo imports
+        // still work after the PWA has been opened once and then goes offline.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024
       }
     })
   ],

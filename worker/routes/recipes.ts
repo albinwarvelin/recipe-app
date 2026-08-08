@@ -1,4 +1,5 @@
 import { createRecipe, deleteRecipe, getRecipe, listRecipes, updateRecipe, type MutationResult } from '../data/recipes';
+import { imageReferenceExists } from '../data/images';
 import { error, json, readJson } from '../http';
 import { recipeDeleteSchema, recipeInputSchema, recipePatchSchema, recipePutSchema } from '../validation/recipes';
 
@@ -49,18 +50,21 @@ export async function recipeRoute(request: Request, env: Env, id: string): Promi
   if (request.method === 'POST' && !recipeId) {
     const parsed = recipeInputSchema.safeParse(body);
     if (!parsed.success) return error('VALIDATION_ERROR', 'The recipe could not be accepted.', 422, id, parsed.error.flatten());
+    if (!await imageReferenceExists(env.DB, parsed.data.image_key)) return error('IMAGE_NOT_FOUND', 'The selected cover image is unavailable.', 422, id);
     return mutationResponse(await createRecipe(env.DB, parsed.data, context), id);
   }
 
   if (request.method === 'PATCH' && recipeId) {
     const parsed = recipePatchSchema.safeParse(body);
     if (!parsed.success) return error('VALIDATION_ERROR', 'The recipe update could not be accepted.', 422, id, parsed.error.flatten());
+    if (!await imageReferenceExists(env.DB, parsed.data.image_key)) return error('IMAGE_NOT_FOUND', 'The selected cover image is unavailable.', 422, id);
     return mutationResponse(await updateRecipe(env.DB, recipeId, parsed.data, context), id);
   }
 
   if (request.method === 'PUT' && recipeId) {
     const parsed = recipePutSchema.safeParse(body);
     if (!parsed.success) return error('VALIDATION_ERROR', 'The replacement recipe could not be accepted.', 422, id, parsed.error.flatten());
+    if (!await imageReferenceExists(env.DB, parsed.data.image_key)) return error('IMAGE_NOT_FOUND', 'The selected cover image is unavailable.', 422, id);
     return mutationResponse(await updateRecipe(env.DB, recipeId, parsed.data, context), id);
   }
 

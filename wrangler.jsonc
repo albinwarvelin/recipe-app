@@ -32,5 +32,13 @@
 			"database_id": "8f684462-2531-4976-add2-df900da6a050",
 			"remote": false
 		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "IMAGES",
+			"bucket_name": "recipe-app-images",
+			"jurisdiction": "eu",
+			"remote": false
+		}
 	]
 }

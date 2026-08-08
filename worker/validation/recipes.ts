@@ -40,7 +40,7 @@ const scalarRecipeSchema = z.object({
   source_type: z.enum(['personal', 'online', 'ai']).default('personal'),
   source_name: nullableShortText,
   source_url: z.string().url().max(2_000).nullable().optional(),
-  image_key: nullableShortText,
+  image_key: z.string().uuid().nullable().optional(),
   notes: z.string().trim().max(10_000).default(''),
   favorite: z.boolean().default(false),
 });

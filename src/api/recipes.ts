@@ -50,12 +50,18 @@ export class ApiError extends Error {
   }
 }
 
+export class AuthenticationRequiredError extends Error {
+  constructor() { super('Sign in is required to synchronize.'); this.name = 'AuthenticationRequiredError'; }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: 'same-origin',
+    redirect: 'manual',
     ...init,
     headers: { Accept: 'application/json', ...init?.headers },
   });
+  if ((response.type as string) === 'opaqueredirect' || response.status === 0 || response.status === 302) throw new AuthenticationRequiredError();
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
     const detail = body.error;
@@ -95,8 +101,65 @@ export async function removeRecipe(recipe: Recipe): Promise<void> {
 export interface ChangePage {
   changes: Array<{ sequence: number; recipe_id: string; version: number; changed_at: string; deleted: boolean; recipe: Recipe | null }>;
   next_cursor: number;
+  has_more: boolean;
 }
 
 export function getChanges(cursor: number): Promise<ChangePage> {
   return api<ChangePage>(`/api/sync/changes?cursor=${cursor}&limit=100`);
+}
+
+export type SyncOperation =
+  | { operation_id: string; type: 'create'; payload: RecipeDraft & { id: string } }
+  | { operation_id: string; type: 'update'; entity_id: string; payload: RecipeDraft & { base_version: number } }
+  | { operation_id: string; type: 'delete'; entity_id: string; base_version: number };
+
+export interface SyncResult {
+  operation_id: string;
+  status: number;
+  body: { recipe?: Recipe; deleted?: boolean; error?: { code?: string; message?: string; details?: { current?: Recipe } } };
+}
+
+export async function pushOperations(operations: SyncOperation[]): Promise<SyncResult[]> {
+  return (await api<{ results: SyncResult[] }>('/api/sync', writeInit('POST', { operations }))).results;
+}
+
+export interface UploadedImage {
+  id: string;
+  content_type: 'image/webp';
+  width: number;
+  height: number;
+  byte_size: number;
+  created_at: string;
+}
+
+export async function uploadImage(imageId: string, blob: Blob, width: number, height: number, operationId: string): Promise<UploadedImage> {
+  return (await api<{ image: UploadedImage }>(`/api/images/${imageId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'image/webp',
+      'X-Requested-With': 'RecipeApp',
+      'Idempotency-Key': operationId,
+      'X-Image-Width': String(width),
+      'X-Image-Height': String(height),
+    },
+    body: blob,
+  })).image;
+}
+
+export async function downloadImage(imageId: string): Promise<Blob> {
+  const response = await fetch(`/api/images/${imageId}`, { credentials: 'same-origin', redirect: 'manual' });
+  if ((response.type as string) === 'opaqueredirect' || response.status === 0 || response.status === 302 || response.status === 401 || response.status === 403) {
+    throw new AuthenticationRequiredError();
+  }
+  if (!response.ok || response.headers.get('Content-Type')?.split(';')[0] !== 'image/webp') {
+    throw new ApiError(response.status, `Image download failed (${response.status}).`);
+  }
+  return response.blob();
+}
+
+export async function removeImage(imageId: string, operationId: string): Promise<void> {
+  await api(`/api/images/${imageId}`, {
+    method: 'DELETE',
+    headers: { 'X-Requested-With': 'RecipeApp', 'Idempotency-Key': operationId },
+  });
 }

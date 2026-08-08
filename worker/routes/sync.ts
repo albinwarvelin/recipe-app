@@ -1,4 +1,5 @@
 import { createRecipe, deleteRecipe, recipeChanges, updateRecipe } from '../data/recipes';
+import { imageReferenceExists } from '../data/images';
 import { error, json, readJson } from '../http';
 import { changesQuerySchema, syncRequestSchema } from '../validation/recipes';
 import { mutationResponse } from './recipes';
@@ -32,6 +33,11 @@ export async function syncRoute(request: Request, env: Env, id: string): Promise
       path: `/api/sync/recipes/${entityId}`,
       body: operation,
     };
+    const referencedImage = operation.type === 'delete' ? undefined : operation.payload.image_key;
+    if (!await imageReferenceExists(env.DB, referencedImage)) {
+      results.push({ operation_id: operation.operation_id, status: 422, body: { error: { code: 'IMAGE_NOT_FOUND', message: 'The selected cover image is unavailable.', requestId: id } } });
+      continue;
+    }
     const result = operation.type === 'create'
       ? await createRecipe(env.DB, operation.payload, context)
       : operation.type === 'update'

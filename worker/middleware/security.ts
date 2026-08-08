@@ -2,7 +2,7 @@ const methods = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
 
 export function applySecurityHeaders(response: Response, origin?: string): Response {
   const headers = new Headers(response.headers);
-  headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'");
+  headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'");
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
@@ -12,7 +12,7 @@ export function applySecurityHeaders(response: Response, origin?: string): Respo
   headers.set('Allow', methods);
   if (origin) headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', methods);
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Cf-Access-Jwt-Assertion, Idempotency-Key, X-Requested-With');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Cf-Access-Jwt-Assertion, Idempotency-Key, X-Requested-With, X-Image-Width, X-Image-Height');
   headers.set('Vary', 'Origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

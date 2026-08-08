@@ -2,6 +2,7 @@ import { requireAccessIdentity } from './auth/access';
 import { error, json, requestId } from './http';
 import { allowedOrigin, applySecurityHeaders } from './middleware/security';
 import { recipeRoute } from './routes/recipes';
+import { imageRoute } from './routes/images';
 import { syncRoute } from './routes/sync';
 import { tagRoute } from './routes/tags';
 
@@ -14,7 +15,11 @@ async function handleRequest(request: Request, env: Env, id: string): Promise<Re
 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) {
-    if (env.ASSETS) return applySecurityHeaders(await env.ASSETS.fetch(request), origin);
+    if (env.ASSETS) {
+      const response = applySecurityHeaders(await env.ASSETS.fetch(request), origin);
+      response.headers.set('X-Recipe-App-Asset', '1');
+      return response;
+    }
     return applySecurityHeaders(error('NOT_FOUND', 'Route was not found.', 404, id), origin);
   }
 
@@ -41,12 +46,14 @@ async function handleRequest(request: Request, env: Env, id: string): Promise<Re
     response = await recipeRoute(request, env, id);
   } else if (url.pathname === '/api/tags') {
     response = await tagRoute(request, env, id);
+  } else if (url.pathname.startsWith('/api/images/')) {
+    response = await imageRoute(request, env, id);
   } else if (url.pathname === '/api/sync' || url.pathname === '/api/sync/changes') {
     response = await syncRoute(request, env, id);
   } else {
     response = error('NOT_FOUND', 'Route was not found.', 404, id);
   }
-  response.headers.set('Cache-Control', 'no-store');
+  if (!(request.method === 'GET' && url.pathname.startsWith('/api/images/'))) response.headers.set('Cache-Control', 'no-store');
   return applySecurityHeaders(response, origin);
 }
 
