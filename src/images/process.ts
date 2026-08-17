@@ -28,25 +28,25 @@ function canvasBlob(bitmap: ImageBitmap, maxDimension: number, quality: number):
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d', { alpha: false });
-  if (!context) throw new Error('Image processing is unavailable in this browser.');
+  if (!context) throw new Error('Bildbehandling är inte tillgänglig i den här webbläsaren.');
   context.drawImage(bitmap, 0, 0, width, height);
   return new Promise((resolve, reject) => canvas.toBlob(
-    (blob) => blob ? resolve({ blob, width, height }) : reject(new Error('The image could not be converted to WebP.')),
+    (blob) => blob ? resolve({ blob, width, height }) : reject(new Error('Bilden kunde inte konverteras till WebP.')),
     'image/webp',
     quality,
   ));
 }
 
 export async function prepareCoverImage(file: File): Promise<PreparedCoverImage> {
-  if (file.size > MAX_INPUT_BYTES) throw new Error('Choose an image smaller than 30 MB.');
+  if (file.size > MAX_INPUT_BYTES) throw new Error('Välj en bild som är mindre än 30 MB.');
   let bitmap: ImageBitmap;
   try { bitmap = await bitmapFromFile(file); }
-  catch { throw new Error('This photo could not be decoded. JPEG, PNG, WebP, HEIC, and HEIF are supported.'); }
+  catch { throw new Error('Bilden kunde inte läsas. JPEG, PNG, WebP, HEIC och HEIF stöds.'); }
   try {
     let full = await canvasBlob(bitmap, FULL_IMAGE_DIMENSION, 0.88);
     if (full.blob.size > MAX_OUTPUT_BYTES) full = await canvasBlob(bitmap, FULL_IMAGE_DIMENSION, 0.78);
     if (full.blob.size > MAX_OUTPUT_BYTES) full = await canvasBlob(bitmap, 2048, 0.76);
-    if (full.blob.size > MAX_OUTPUT_BYTES) throw new Error('The optimized image is still larger than 6 MB. Choose a smaller photo.');
+    if (full.blob.size > MAX_OUTPUT_BYTES) throw new Error('Den optimerade bilden är fortfarande större än 6 MB. Välj en mindre bild.');
     const thumbnail = await canvasBlob(bitmap, THUMBNAIL_DIMENSION, 0.82);
     return { id: crypto.randomUUID(), full: full.blob, thumbnail: thumbnail.blob, width: full.width, height: full.height };
   } finally {

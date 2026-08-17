@@ -45,7 +45,7 @@ sw.addEventListener('fetch', (event) => {
         return response;
       } catch {
         const cached = await caches.match('/');
-        return cached ?? new Response('Recipes is offline and the app shell has not been cached yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        return cached ?? new Response('Recept är offline och appskalet har ännu inte sparats.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       }
     })());
     return;
