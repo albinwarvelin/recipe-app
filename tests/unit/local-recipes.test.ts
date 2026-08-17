@@ -34,6 +34,32 @@ describe('local-first recipe repository', () => {
     expect(operations[0].payload).not.toHaveProperty('sync_status');
   });
 
+  it('clears a permanent failure when the recipe is edited again', async () => {
+    const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Needs correction' }, { kind: 'keep' });
+    const queued = await db.outbox.toCollection().first();
+    await db.outbox.update(queued!.sequence!, { status: 'failed', failure_kind: 'permanent', last_error_code: 'VALIDATION_ERROR' });
+    await db.recipes.update(recipe.id, { sync_status: 'failed' });
+
+    await setLocalFavorite({ ...recipe, sync_status: 'failed' }, true);
+
+    expect(await db.outbox.toCollection().first()).toMatchObject({ status: 'pending', failure_kind: null, next_attempt_at: null, last_error_code: null });
+    expect(await db.recipes.get(recipe.id)).toMatchObject({ sync_status: 'pending', favorite: true });
+  });
+
+  it('detaches a failed image upload when the cover is removed', async () => {
+    const imageId = crypto.randomUUID();
+    const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Missing cover' }, {
+      kind: 'replace', image: { id: imageId, full: new Blob(['full'], { type: 'image/webp' }), thumbnail: new Blob(['thumb'], { type: 'image/webp' }), width: 1200, height: 800 },
+    });
+    const upload = await db.outbox.where('type').equals('image-upload').first();
+    await db.outbox.update(upload!.sequence!, { status: 'failed', failure_kind: 'permanent', last_error_code: 'LOCAL_IMAGE_MISSING' });
+
+    await saveLocalRecipe(recipe, { ...sanitizeRecipeDraft(recipe), image_key: null }, { kind: 'remove' });
+
+    expect(await db.outbox.where('type').equals('image-upload').count()).toBe(0);
+    expect(await db.outbox.where('type').equals('recipe-create').first()).toMatchObject({ status: 'pending', depends_on: null });
+  });
+
   it('removes client-only fields from legacy queued recipe payloads', () => {
     const legacyPayload = {
       ...emptyRecipeDraft,

@@ -59,14 +59,25 @@ interface ApiErrorBody {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly requestId?: string, public readonly current?: Recipe) {
+  constructor(public readonly status: number, message: string, public readonly requestId?: string, public readonly current?: Recipe, public readonly code?: string) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
 export class AuthenticationRequiredError extends Error {
-  constructor() { super('Sign in is required to synchronize.'); this.name = 'AuthenticationRequiredError'; }
+  constructor() { super('Du behöver logga in för att synkronisera.'); this.name = 'AuthenticationRequiredError'; }
+}
+
+function apiErrorMessage(status: number, code?: string): string {
+  if (status === 401 || status === 403) return 'Du saknar behörighet för den här åtgärden.';
+  if (status === 404) return 'Det som efterfrågades kunde inte hittas.';
+  if (status === 409 || code === 'VERSION_CONFLICT') return 'Ändringen krockar med en nyare version och behöver granskas.';
+  if (status === 413) return 'Innehållet är för stort för att skickas.';
+  if (status === 422 || code === 'VALIDATION_ERROR') return 'Innehållet innehåller ogiltiga värden.';
+  if (status === 429) return 'För många försök. Vänta en stund och försök igen.';
+  if (status >= 500) return 'Servern kunde inte slutföra åtgärden. Försök igen senare.';
+  return `Åtgärden misslyckades (${status}).`;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -80,7 +91,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
     const detail = body.error;
-    throw new ApiError(response.status, detail?.message ?? `Request failed (${response.status}).`, detail?.requestId, detail?.details?.current);
+    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId, detail?.details?.current, detail?.code);
   }
   return response.json() as Promise<T>;
 }
@@ -175,7 +186,7 @@ export async function downloadImage(imageId: string): Promise<Blob> {
     throw new AuthenticationRequiredError();
   }
   if (!response.ok || response.headers.get('Content-Type')?.split(';')[0] !== 'image/webp') {
-    throw new ApiError(response.status, `Image download failed (${response.status}).`);
+    throw new ApiError(response.status, `Bilden kunde inte hämtas (${response.status}).`);
   }
   return response.blob();
 }

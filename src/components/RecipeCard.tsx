@@ -10,7 +10,7 @@ export function RecipeCard({ recipe, to, onFavorite }: { recipe: LocalRecipe; to
     <Link className="recipe-card-open" to={to} aria-label={`Öppna ${recipe.title}`}>
       <div className={`recipe-cover ${imageUrl ? 'has-image' : ''}`} style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined}>
         {!imageUrl && <span aria-hidden="true">{recipe.title.slice(0, 1).toUpperCase()}</span>}
-        {recipe.sync_status !== 'synced' && <span className={`card-sync-state ${recipe.sync_status}`}>{recipe.sync_status === 'conflict' ? 'Behöver granskas' : 'Väntar'}</span>}
+        {recipe.sync_status !== 'synced' && <span className={`card-sync-state ${recipe.sync_status}`}>{recipe.sync_status === 'conflict' ? 'Behöver granskas' : recipe.sync_status === 'failed' ? 'Kräver åtgärd' : 'Väntar'}</span>}
       </div>
       <div className="recipe-card-body">
         <h2 className="heading-3">{recipe.title}</h2>

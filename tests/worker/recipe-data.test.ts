@@ -55,4 +55,17 @@ describe('recipe aggregate persistence', () => {
     expect(catalog.some((entry) => entry.names.some((name) => name.locale === 'sv' && name.display_name === 'Lax'))).toBe(true);
     expect(catalog.some((entry) => entry.names.some((name) => name.locale === 'en' && name.display_name === 'Salmon'))).toBe(true);
   });
+
+  it('keeps accented and unaccented tag identities distinct', async () => {
+    const input = recipeInputSchema.parse({ title: 'Dessert names', tags: [{ name: 'Crème' }, { name: 'Creme' }] });
+    const result = await createRecipe(env.DB, input, {
+      operationId: crypto.randomUUID(), method: 'POST', path: '/api/recipes', body: input,
+    });
+    expect(result).toMatchObject({ kind: 'success', status: 201 });
+    const rows = await env.DB.prepare("SELECT name, normalized_name FROM tags WHERE name IN ('Crème', 'Creme') ORDER BY name").all();
+    expect(rows.results).toEqual(expect.arrayContaining([
+      { name: 'Crème', normalized_name: 'crème' },
+      { name: 'Creme', normalized_name: 'creme' },
+    ]));
+  });
 });

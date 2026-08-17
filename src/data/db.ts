@@ -1,8 +1,9 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { IngredientCatalogEntry, Recipe, RecipeDraft } from '../api/recipes';
 
-export type LocalSyncStatus = 'synced' | 'pending' | 'conflict';
+export type LocalSyncStatus = 'synced' | 'pending' | 'failed' | 'conflict';
 export type OutboxStatus = 'pending' | 'syncing' | 'failed' | 'conflict';
+export type OutboxFailureKind = 'transient' | 'permanent';
 export type OutboxType = 'recipe-create' | 'recipe-update' | 'recipe-delete' | 'image-upload' | 'image-delete';
 
 export interface LocalRecipe extends Recipe {
@@ -35,6 +36,8 @@ export interface OutboxOperation {
   local_version: number;
   status: OutboxStatus;
   last_error_code: string | null;
+  failure_kind?: OutboxFailureKind | null;
+  next_attempt_at?: string | null;
   depends_on: string | null;
 }
 

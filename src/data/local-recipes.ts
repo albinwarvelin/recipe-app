@@ -1,7 +1,8 @@
 import type { RecipeDraft } from '../api/recipes';
 import type { PreparedCoverImage } from '../images/process';
 import { db, type LocalImage, type LocalIngredientCatalog, type LocalRecipe, type OutboxOperation } from './db';
-import { normalizeDisplayName, normalizeSearchValue, normalizeUnit } from './normalize';
+import { normalizeDisplayName, normalizeIdentityValue, normalizeUnit } from './normalize';
+import { validateRecipeDraft } from './validate-recipe';
 
 export type CoverChange = { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; image: PreparedCoverImage };
 
@@ -38,16 +39,16 @@ export function sanitizeRecipeDraft(draft: RecipeDraft): RecipeDraft {
 }
 
 async function withStableChildren(rawDraft: RecipeDraft): Promise<{ draft: RecipeDraft; newCatalogEntries: LocalIngredientCatalog[] }> {
-  const draft = sanitizeRecipeDraft(rawDraft);
+  const draft = validateRecipeDraft(sanitizeRecipeDraft(rawDraft));
   const catalog = await db.ingredientCatalog.toArray();
   const tags = await db.tags.toArray();
-  const catalogByName = new Map(catalog.flatMap((entry) => entry.names.map((name) => [name.normalized_name, entry] as const)));
-  const tagsByName = new Map(tags.map((tag) => [tag.normalized_name, tag] as const));
+  const catalogByName = new Map(catalog.flatMap((entry) => entry.names.map((name) => [normalizeIdentityValue(name.display_name), entry] as const)));
+  const tagsByName = new Map(tags.map((tag) => [normalizeIdentityValue(tag.name), tag] as const));
   const newCatalogEntries: LocalIngredientCatalog[] = [];
   const normalizedTags = new Map<string, RecipeDraft['tags'][number]>();
   for (const tag of draft.tags) {
     const name = normalizeDisplayName(tag.name);
-    const normalized = normalizeSearchValue(name);
+    const normalized = normalizeIdentityValue(name);
     if (!normalized || normalizedTags.has(normalized)) continue;
     const known = tagsByName.get(normalized);
     normalizedTags.set(normalized, { id: known?.id ?? tag.id ?? crypto.randomUUID(), name: known?.name ?? name });
@@ -56,7 +57,7 @@ async function withStableChildren(rawDraft: RecipeDraft): Promise<{ draft: Recip
     ...draft,
     ingredients: draft.ingredients.map((item) => {
       const name = normalizeDisplayName(item.name);
-      const normalized = normalizeSearchValue(name);
+      const normalized = normalizeIdentityValue(name);
       const known = item.catalog_id ? catalog.find((entry) => entry.id === item.catalog_id) : catalogByName.get(normalized);
       const catalogId = known?.id ?? item.catalog_id ?? crypto.randomUUID();
       if (!known && !newCatalogEntries.some((entry) => entry.id === catalogId)) {
@@ -83,7 +84,7 @@ async function refreshTags(): Promise<void> {
   const recipes = await db.recipes.toArray();
   const tags = new Map<string, { id: string; name: string; normalized_name: string }>();
   for (const recipe of recipes) for (const tag of recipe.tags) {
-    const normalized_name = tag.name.toLowerCase();
+    const normalized_name = normalizeIdentityValue(tag.name);
     tags.set(normalized_name, { id: tag.id ?? crypto.randomUUID(), name: tag.name, normalized_name });
   }
   await db.tags.clear();
@@ -103,7 +104,8 @@ function operation(type: OutboxOperation['type'], entityId: string, timestamp: s
     operation_id: crypto.randomUUID(), entity_id: entityId, type, payload,
     created_at: timestamp, last_attempt_at: null, attempt_count: 0,
     base_server_version: baseVersion, local_version: localVersion,
-    status: 'pending', last_error_code: null, depends_on: dependsOn ?? null,
+    status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null,
+    depends_on: dependsOn ?? null,
   };
 }
 
@@ -143,12 +145,19 @@ export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: Re
     const pending = await pendingRecipeOperation(recipeId);
     let recipeOperation: OutboxOperation;
     if (pending && pending.status !== 'syncing') {
+      const nextDependency = uploadOperation?.operation_id ?? (cover.kind === 'remove' ? null : pending.depends_on);
+      if (pending.depends_on && pending.depends_on !== nextDependency) {
+        const obsoleteDependency = await db.outbox.where('operation_id').equals(pending.depends_on).first();
+        if (obsoleteDependency?.type === 'image-upload' && obsoleteDependency.sequence !== undefined) {
+          await db.outbox.delete(obsoleteDependency.sequence);
+        }
+      }
       recipeOperation = {
         ...pending,
         type: pending.type === 'recipe-create' ? 'recipe-create' : 'recipe-update',
         payload: { ...draft, ...(pending.type === 'recipe-create' ? { id: recipeId } : { base_version: pending.base_server_version }) },
-        local_version: localVersion, status: 'pending', last_error_code: null,
-        depends_on: uploadOperation?.operation_id ?? pending.depends_on,
+        local_version: localVersion, status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null,
+        depends_on: nextDependency,
       };
       await db.outbox.put(recipeOperation);
     } else {
@@ -191,7 +200,7 @@ export async function deleteLocalRecipe(recipe: LocalRecipe): Promise<void> {
       const localVersion = recipe.local_version + 1;
       let deleteOperation: OutboxOperation;
       if (pending && pending.status !== 'syncing') {
-        deleteOperation = { ...pending, type: 'recipe-delete', payload: undefined, local_version: localVersion, status: 'pending', last_error_code: null };
+        deleteOperation = { ...pending, type: 'recipe-delete', payload: undefined, local_version: localVersion, status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null };
         await db.outbox.put(deleteOperation);
       } else {
         deleteOperation = operation('recipe-delete', recipe.id, timestamp, localVersion, recipe.version, undefined, pending?.operation_id);

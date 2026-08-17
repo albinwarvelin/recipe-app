@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Ingredient } from '../api/recipes';
 import type { LocalIngredientCatalog } from '../data/db';
 import { normalizeSearchValue } from '../data/normalize';
+import { recipeLimits } from '../../shared/recipe-validation';
 
 export function ingredientLabel(entry: LocalIngredientCatalog | undefined): string {
   if (!entry) return '';
@@ -23,7 +24,7 @@ export function IngredientCombobox({ value, catalog, index, onChange }: {
   const matches = useMemo(() => {
     if (!query) return [];
     return catalog.map((entry) => {
-      const names = entry.names.map((name) => name.normalized_name);
+      const names = entry.names.map((name) => normalizeSearchValue(name.normalized_name));
       const prefix = names.some((name) => name.startsWith(query));
       const contains = names.some((name) => name.includes(query));
       return { entry, score: prefix ? 0 : contains ? 1 : 2 };
@@ -40,6 +41,7 @@ export function IngredientCombobox({ value, catalog, index, onChange }: {
       aria-expanded={open && matches.length > 0}
       aria-controls={`ingredient-options-${index}`}
       autoComplete="off"
+      maxLength={recipeLimits.ingredientName}
       placeholder="Ingrediens"
       value={value.name}
       onFocus={() => setOpen(true)}

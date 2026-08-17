@@ -1,8 +1,8 @@
 import { listTags, type Tag } from '../data/recipes';
 import { findProcessedOperation, processedOperationStatement, requestFingerprint } from '../idempotency';
-import { error, json, readJson } from '../http';
+import { error, json, MAX_TAG_JSON_BYTES, readJson } from '../http';
 import { tagCreateSchema } from '../validation/recipes';
-import { normalizeDisplayName, normalizeSearchValue } from '../normalization';
+import { normalizeDisplayName, normalizeIdentityValue, normalizeSearchValue } from '../normalization';
 
 export async function tagRoute(request: Request, env: Env, id: string): Promise<Response> {
   if (request.method === 'GET') return json({ tags: await listTags(env.DB) }, 200, id);
@@ -12,7 +12,7 @@ export async function tagRoute(request: Request, env: Env, id: string): Promise<
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
     return error('INVALID_IDEMPOTENCY_KEY', 'Idempotency-Key must be a UUID.', 422, id);
   }
-  const body = await readJson(request, id);
+  const body = await readJson(request, id, MAX_TAG_JSON_BYTES);
   if (body instanceof Response) return body;
   const parsed = tagCreateSchema.safeParse(body);
   if (!parsed.success) return error('VALIDATION_ERROR', 'The tag could not be accepted.', 422, id, parsed.error.flatten());
@@ -28,14 +28,18 @@ export async function tagRoute(request: Request, env: Env, id: string): Promise<
     return response;
   }
   const displayName = normalizeDisplayName(parsed.data.name);
-  const normalizedName = normalizeSearchValue(displayName);
-  const existing = await env.DB.prepare('SELECT id, name FROM tags WHERE normalized_name = ?1').bind(normalizedName).first<Tag>();
+  const normalizedName = normalizeIdentityValue(displayName);
+  const legacyNormalizedName = normalizeSearchValue(displayName);
+  const existing = await env.DB.prepare(
+    'SELECT id, name, normalized_name FROM tags WHERE normalized_name = ?1 OR normalized_name = ?2 ORDER BY CASE WHEN normalized_name = ?1 THEN 0 ELSE 1 END LIMIT 1'
+  ).bind(normalizedName, legacyNormalizedName).first<Tag & { normalized_name: string }>();
   const tag = existing ?? { id: crypto.randomUUID(), name: displayName };
+  const storedNormalizedName = existing?.normalized_name ?? normalizedName;
   const status = existing ? 200 : 201;
   const responseBody = { tag };
   const now = new Date().toISOString();
   await env.DB.batch([
-    env.DB.prepare('INSERT OR IGNORE INTO tags (id, name, normalized_name, created_at) VALUES (?1, ?2, ?3, ?4)').bind(tag.id, tag.name, normalizedName, now),
+    env.DB.prepare('INSERT OR IGNORE INTO tags (id, name, normalized_name, created_at) VALUES (?1, ?2, ?3, ?4)').bind(tag.id, tag.name, storedNormalizedName, now),
     processedOperationStatement(env.DB, operationId, 'POST', path, fingerprint, status, responseBody, now),
   ]);
   return json(responseBody, status, id);

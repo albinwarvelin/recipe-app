@@ -93,7 +93,7 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
   const ingredientAlternatives = useMemo(() => {
     const term = normalizeSearchValue(ingredientSearch);
     return catalog.map((entry) => {
-      const names = entry.names.map((name) => name.normalized_name);
+      const names = entry.names.map((name) => normalizeSearchValue(name.normalized_name));
       const score = !term ? 1 : names.some((name) => name.startsWith(term)) ? 0 : names.some((name) => name.includes(term)) ? 1 : 2;
       return { entry, score };
     }).filter(({ score }) => score < 2)

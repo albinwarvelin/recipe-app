@@ -1,5 +1,5 @@
 import { findProcessedOperation, processedOperationStatement, requestFingerprint } from '../idempotency';
-import { normalizeDisplayName, normalizeSearchValue, normalizeUnit } from '../normalization';
+import { normalizeDisplayName, normalizeIdentityValue, normalizeSearchValue, normalizeUnit } from '../normalization';
 import type { IngredientInput, InstructionInput, RecipeInput, RecipePatch, RecipePut, TagInput } from '../validation/recipes';
 
 interface RecipeRow {
@@ -175,14 +175,18 @@ export async function listIngredientCatalog(db: D1Database): Promise<IngredientC
 async function resolveTags(db: D1Database, inputs: TagInput[], now: string): Promise<Array<Tag & { normalizedName: string; created: boolean }>> {
   if (inputs.length === 0) return [];
   const displayNames = inputs.map((tag) => normalizeDisplayName(tag.name));
-  const normalizedNames = displayNames.map(normalizeSearchValue);
-  const existing = await Promise.all(normalizedNames.map((name) => db.prepare('SELECT id, name FROM tags WHERE normalized_name = ?1').bind(name).first<Tag>()));
+  const normalizedNames = displayNames.map(normalizeIdentityValue);
+  const existing = await Promise.all(normalizedNames.map((name, index) => {
+    return db.prepare(
+      'SELECT id, name, normalized_name FROM tags WHERE normalized_name = ?1 OR normalized_name = ?2 ORDER BY CASE WHEN normalized_name = ?1 THEN 0 ELSE 1 END LIMIT 1'
+    ).bind(name, normalizeSearchValue(displayNames[index])).first<Tag & { normalized_name: string }>();
+  }));
   return inputs.map((tag, index) => {
     const row = existing[index];
     return {
       id: row?.id ?? tag.id ?? crypto.randomUUID(),
       name: row?.name ?? displayNames[index],
-      normalizedName: normalizedNames[index],
+      normalizedName: row?.normalized_name ?? normalizedNames[index],
       created: !row,
     };
   });
@@ -197,11 +201,14 @@ async function resolveIngredients(db: D1Database, inputs: IngredientInput[]): Pr
   const ingredients: ResolvedIngredient[] = [];
   for (const input of inputs) {
     const name = normalizeDisplayName(input.name);
-    const normalizedName = normalizeSearchValue(name);
+    const normalizedName = normalizeIdentityValue(name);
+    const legacyNormalizedName = normalizeSearchValue(name);
     const selected = input.catalog_id
       ? await db.prepare('SELECT id FROM ingredient_catalog WHERE id = ?1').bind(input.catalog_id).first<{ id: string }>()
       : null;
-    const matched = selected ?? await db.prepare('SELECT ingredient_id AS id FROM ingredient_catalog_names WHERE normalized_name = ?1 LIMIT 1').bind(normalizedName).first<{ id: string }>();
+    const matched = selected ?? await db.prepare(
+      'SELECT ingredient_id AS id FROM ingredient_catalog_names WHERE normalized_name = ?1 OR normalized_name = ?2 ORDER BY CASE WHEN normalized_name = ?1 THEN 0 ELSE 1 END LIMIT 1'
+    ).bind(normalizedName, legacyNormalizedName).first<{ id: string }>();
     let catalogId = matched?.id ?? createdByName.get(normalizedName);
     if (!catalogId) {
       catalogId = input.catalog_id ?? crypto.randomUUID();

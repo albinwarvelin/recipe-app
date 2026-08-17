@@ -1,6 +1,6 @@
 import { createRecipe, deleteRecipe, recipeChanges, updateRecipe } from '../data/recipes';
 import { imageReferenceExists } from '../data/images';
-import { error, json, readJson } from '../http';
+import { error, json, MAX_SYNC_JSON_BYTES, readJson } from '../http';
 import { changesQuerySchema, syncRequestSchema } from '../validation/recipes';
 import { mutationResponse } from './recipes';
 
@@ -19,7 +19,7 @@ export async function syncRoute(request: Request, env: Env, id: string): Promise
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outerOperationId)) {
     return error('INVALID_IDEMPOTENCY_KEY', 'Idempotency-Key must be a UUID.', 422, id);
   }
-  const body = await readJson(request, id);
+  const body = await readJson(request, id, MAX_SYNC_JSON_BYTES);
   if (body instanceof Response) return body;
   const parsed = syncRequestSchema.safeParse(body);
   if (!parsed.success) return error('VALIDATION_ERROR', 'The sync operations could not be accepted.', 422, id, parsed.error.flatten());

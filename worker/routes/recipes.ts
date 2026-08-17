@@ -1,6 +1,6 @@
 import { createRecipe, deleteRecipe, getRecipe, listRecipes, updateRecipe, type MutationResult } from '../data/recipes';
 import { imageReferenceExists } from '../data/images';
-import { error, json, readJson } from '../http';
+import { error, json, MAX_RECIPE_JSON_BYTES, readJson } from '../http';
 import { recipeDeleteSchema, recipeInputSchema, recipePatchSchema, recipePutSchema } from '../validation/recipes';
 
 function recipeIdFromPath(pathname: string): string | undefined {
@@ -43,7 +43,7 @@ export async function recipeRoute(request: Request, env: Env, id: string): Promi
 
   const key = operationId(request, id);
   if (key instanceof Response) return key;
-  const body = await readJson(request, id);
+  const body = await readJson(request, id, MAX_RECIPE_JSON_BYTES);
   if (body instanceof Response) return body;
   const context = { operationId: key, method: request.method, path: pathname, body };
 

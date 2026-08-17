@@ -1,14 +1,16 @@
 import { ApiError, AuthenticationRequiredError, downloadImage, getChanges, getIngredientCatalog, getTags, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
-import { normalizeSearchValue } from '../data/normalize';
+import { normalizeIdentityValue } from '../data/normalize';
 import { db, type LocalRecipe, type OutboxOperation, type RecipeConflict } from '../data/db';
 import { sanitizeRecipeDraft } from '../data/local-recipes';
 import { thumbnailFromWebp } from '../images/process';
+import { canAttemptOperation, failureDispositionForStatus } from './failure-policy';
 
 export type SyncPhase = 'idle' | 'syncing' | 'offline' | 'auth-required' | 'error';
 export interface SyncSnapshot { phase: SyncPhase; pending: number; lastSync: string | null; message: string | null; }
 
 let snapshot: SyncSnapshot = { phase: navigator.onLine ? 'idle' : 'offline', pending: 0, lastSync: null, message: null };
 let activeSync: Promise<void> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<(next: SyncSnapshot) => void>();
 
 async function pruneFullImageCache(): Promise<void> {
@@ -32,6 +34,19 @@ async function updatePendingCount(): Promise<void> {
   publish({ pending: await db.outbox.where('status').anyOf('pending', 'syncing', 'failed', 'conflict').count() });
 }
 
+async function scheduleNextRetry(): Promise<void> {
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = null;
+  if (!navigator.onLine) return;
+  const retryable = (await db.outbox.where('status').equals('failed').toArray())
+    .filter((entry) => entry.failure_kind !== 'permanent' && entry.next_attempt_at)
+    .sort((left, right) => left.next_attempt_at!.localeCompare(right.next_attempt_at!));
+  const next = retryable[0]?.next_attempt_at;
+  if (!next) return;
+  const delay = Math.max(0, new Date(next).getTime() - Date.now());
+  retryTimer = setTimeout(() => { retryTimer = null; void syncNow(); }, delay);
+}
+
 function recipeDraft(recipe: LocalRecipe): RecipeDraft {
   const { id: _id, version: _version, local_version: _local, sync_status: _sync, created_at: _created, updated_at: _updated, deleted_at: _deleted, ...draft } = recipe;
   return structuredClone(draft);
@@ -43,9 +58,27 @@ function syncOperation(entry: OutboxOperation): SyncOperation {
   return { operation_id: entry.operation_id, type: 'delete', entity_id: entry.entity_id, base_version: entry.base_server_version };
 }
 
-async function markFailed(entry: OutboxOperation, code: string): Promise<void> {
+function nextRetryAt(attemptCount: number): string {
+  const delay = Math.min(5 * 60_000, 5_000 * 2 ** Math.max(0, attemptCount - 1));
+  return new Date(Date.now() + delay).toISOString();
+}
+
+async function markFailed(entry: OutboxOperation, code: string, kind: 'transient' | 'permanent'): Promise<void> {
   if (entry.sequence === undefined) return;
-  await db.outbox.update(entry.sequence, { status: 'failed', last_error_code: code });
+  await db.transaction('rw', db.outbox, db.recipes, async () => {
+    await db.outbox.update(entry.sequence!, {
+      status: 'failed',
+      last_error_code: code,
+      failure_kind: kind,
+      next_attempt_at: kind === 'transient' ? nextRetryAt(entry.attempt_count + 1) : null,
+    });
+    if (kind !== 'permanent') return;
+    if (entry.type.startsWith('recipe-')) await db.recipes.update(entry.entity_id, { sync_status: 'failed' });
+    if (entry.type === 'image-upload') {
+      const dependents = await db.outbox.where('depends_on').equals(entry.operation_id).toArray();
+      await Promise.all(dependents.filter((item) => item.type.startsWith('recipe-')).map((item) => db.recipes.update(item.entity_id, { sync_status: 'failed' })));
+    }
+  });
 }
 
 async function unblockDependents(entry: OutboxOperation, serverVersion?: number): Promise<void> {
@@ -97,11 +130,11 @@ async function recordConflict(entry: OutboxOperation, server: Recipe | null): Pr
 
 async function processEntry(entry: OutboxOperation): Promise<boolean> {
   if (entry.sequence === undefined) return true;
-  await db.outbox.update(entry.sequence, { status: 'syncing', last_attempt_at: new Date().toISOString(), attempt_count: entry.attempt_count + 1 });
+  await db.outbox.update(entry.sequence, { status: 'syncing', last_attempt_at: new Date().toISOString(), attempt_count: entry.attempt_count + 1, failure_kind: null, next_attempt_at: null });
   try {
     if (entry.type === 'image-upload') {
       const image = await db.images.get(entry.entity_id);
-      if (!image?.full_blob) { await markFailed(entry, 'LOCAL_IMAGE_MISSING'); return false; }
+      if (!image?.full_blob) { await markFailed(entry, 'LOCAL_IMAGE_MISSING', 'permanent'); return true; }
       await uploadImage(image.id, image.full_blob, image.width, image.height, entry.operation_id);
       await db.transaction('rw', db.images, db.outbox, async () => {
         await db.images.update(image.id, { remote: true });
@@ -126,14 +159,25 @@ async function processEntry(entry: OutboxOperation): Promise<boolean> {
       await recordConflict(entry, result.body.error.details?.current ?? null);
       return true;
     }
-    await markFailed(entry, result.body.error?.code ?? `HTTP_${result.status}`);
-    return false;
+    const kind = failureDispositionForStatus(result.status);
+    await markFailed(entry, result.body.error?.code ?? `HTTP_${result.status}`, kind);
+    return kind === 'permanent';
   } catch (cause) {
     if (cause instanceof AuthenticationRequiredError || (cause instanceof ApiError && (cause.status === 401 || cause.status === 403))) {
-      if (entry.sequence !== undefined) await db.outbox.update(entry.sequence, { status: 'pending', last_error_code: 'AUTH_REQUIRED' });
+      if (entry.sequence !== undefined) await db.outbox.update(entry.sequence, { status: 'pending', last_error_code: 'AUTH_REQUIRED', failure_kind: null, next_attempt_at: null });
       throw new AuthenticationRequiredError();
     }
-    await markFailed(entry, cause instanceof ApiError ? `HTTP_${cause.status}` : 'NETWORK_ERROR');
+    if (entry.type === 'image-delete' && cause instanceof ApiError && cause.status === 404) {
+      await db.transaction('rw', db.images, db.outbox, async () => {
+        await db.images.delete(entry.entity_id);
+        await db.outbox.delete(entry.sequence!);
+        await unblockDependents(entry);
+      });
+      return true;
+    }
+    const kind = cause instanceof ApiError ? failureDispositionForStatus(cause.status) : 'transient';
+    await markFailed(entry, cause instanceof ApiError ? cause.code ?? `HTTP_${cause.status}` : 'NETWORK_ERROR', kind);
+    if (kind === 'permanent') return true;
     throw cause;
   }
 }
@@ -143,7 +187,8 @@ async function processOutbox(): Promise<void> {
   while (true) {
     const all = await db.outbox.orderBy('sequence').toArray();
     const ids = new Set(all.map((entry) => entry.operation_id));
-    const next = all.find((entry) => (entry.status === 'pending' || entry.status === 'failed') && (!entry.depends_on || !ids.has(entry.depends_on)));
+    const timestamp = new Date().toISOString();
+    const next = all.find((entry) => canAttemptOperation(entry, timestamp) && (!entry.depends_on || !ids.has(entry.depends_on)));
     if (!next) return;
     const continued = await processEntry(next);
     await updatePendingCount();
@@ -220,12 +265,12 @@ async function refreshReferenceData(): Promise<void> {
   const preservedCatalogIds = new Set(pendingRecipes.flatMap((recipe) => recipe.ingredients.flatMap((item) => item.catalog_id ? [item.catalog_id] : [])));
   const preservedCatalog = (await Promise.all([...preservedCatalogIds].map((id) => db.ingredientCatalog.get(id))))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-  const preservedTags = pendingRecipes.flatMap((recipe) => recipe.tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeSearchValue(tag.name) }] : []));
+  const preservedTags = pendingRecipes.flatMap((recipe) => recipe.tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeIdentityValue(tag.name) }] : []));
   await db.transaction('rw', db.ingredientCatalog, db.tags, async () => {
     await Promise.all([db.ingredientCatalog.clear(), db.tags.clear()]);
     await db.ingredientCatalog.bulkPut([...new Map([...catalog, ...preservedCatalog].map((entry) => [entry.id, entry])).values()]);
     await db.tags.bulkPut([...new Map([
-      ...tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeSearchValue(tag.name) }] : []),
+      ...tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeIdentityValue(tag.name) }] : []),
       ...preservedTags,
     ].map((tag) => [tag.normalized_name, tag])).values()]);
   });
@@ -241,12 +286,18 @@ async function runSync(): Promise<void> {
     await refreshReferenceData();
     const lastSync = new Date().toISOString();
     await db.syncMetadata.put({ key: 'last_successful_sync', value: lastSync });
-    publish({ phase: 'idle', lastSync, message: null });
+    const failures = await db.outbox.where('status').equals('failed').toArray();
+    if (failures.some((entry) => entry.failure_kind === 'permanent')) publish({ phase: 'error', lastSync, message: 'En eller flera ändringar kräver åtgärd.' });
+    else if (failures.length) publish({ phase: 'error', lastSync, message: 'Synkroniseringen avbröts tillfälligt och försöker igen senare.' });
+    else publish({ phase: 'idle', lastSync, message: null });
   } catch (cause) {
-    if (cause instanceof AuthenticationRequiredError) publish({ phase: 'auth-required', message: 'Sign in to synchronize pending changes.' });
+    if (cause instanceof AuthenticationRequiredError) publish({ phase: 'auth-required', message: 'Logga in för att synkronisera väntande ändringar.' });
     else if (!navigator.onLine) publish({ phase: 'offline', message: null });
-    else publish({ phase: 'error', message: cause instanceof Error ? cause.message : 'Synchronization failed.' });
-  } finally { await updatePendingCount(); }
+    else publish({ phase: 'error', message: cause instanceof Error ? cause.message : 'Synkroniseringen misslyckades.' });
+  } finally {
+    await updatePendingCount();
+    await scheduleNextRetry();
+  }
 }
 
 export function syncNow(): Promise<void> {
@@ -260,7 +311,11 @@ export function installSyncTriggers(): () => void {
   const visible = () => { if (document.visibilityState === 'visible') void syncNow(); };
   window.addEventListener('online', online); window.addEventListener('offline', offline); document.addEventListener('visibilitychange', visible);
   void syncNow();
-  return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline); document.removeEventListener('visibilitychange', visible); };
+  return () => {
+    window.removeEventListener('online', online); window.removeEventListener('offline', offline); document.removeEventListener('visibilitychange', visible);
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  };
 }
 
 export async function resolveConflictKeepServer(conflict: RecipeConflict): Promise<void> {

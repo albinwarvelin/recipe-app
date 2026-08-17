@@ -1,5 +1,5 @@
 import { getImage } from '../data/images';
-import { error, json } from '../http';
+import { error, json, readBoundedBody } from '../http';
 import { findProcessedOperation, processedOperationStatement, requestFingerprint } from '../idempotency';
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -14,27 +14,6 @@ function operationId(request: Request, id: string): string | Response {
   const value = request.headers.get('Idempotency-Key');
   if (!value) return error('IDEMPOTENCY_KEY_REQUIRED', 'A stable UUID Idempotency-Key is required.', 400, id);
   return uuidPattern.test(value) ? value : error('INVALID_IDEMPOTENCY_KEY', 'Idempotency-Key must be a UUID.', 422, id);
-}
-
-async function readBoundedBody(request: Request): Promise<ArrayBuffer | null> {
-  if (!request.body) return new ArrayBuffer(0);
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_IMAGE_BYTES) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
-  return result.buffer;
 }
 
 function ascii(bytes: Uint8Array, offset: number, length: number): string {
@@ -79,7 +58,7 @@ async function uploadImage(request: Request, env: Env, id: string, imageId: stri
   }
   const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
   if (declaredLength > MAX_IMAGE_BYTES) return error('PAYLOAD_TOO_LARGE', 'The image exceeds the 6 MB limit.', 413, id);
-  const body = await readBoundedBody(request);
+  const body = await readBoundedBody(request, MAX_IMAGE_BYTES);
   if (body === null) return error('PAYLOAD_TOO_LARGE', 'The image exceeds the 6 MB limit.', 413, id);
   if (body.byteLength === 0) return error('INVALID_IMAGE', 'The image is empty.', 422, id);
   const dimensions = webpDimensions(body);

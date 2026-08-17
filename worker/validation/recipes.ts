@@ -1,74 +1,33 @@
 import { z } from 'zod';
+import {
+  ingredientSchema,
+  instructionSchema,
+  recipeDraftSchema,
+  recipeLimits,
+  scalarRecipeSchema,
+  tagArraySchema,
+  tagInputSchema,
+} from '../../shared/recipe-validation';
 
-const nullableShortText = z.string().trim().max(500).nullable().optional();
-const nullableNonNegativeInteger = z.number().int().min(0).max(10_000).nullable().optional();
+export { ingredientSchema, instructionSchema, tagInputSchema } from '../../shared/recipe-validation';
 
-export const ingredientSchema = z.object({
-  id: z.string().uuid().optional(),
-  catalog_id: z.string().uuid().nullable().optional(),
-  amount: z.string().trim().max(80).nullable().optional(),
-  unit: z.string().trim().max(80).nullable().optional(),
-  name: z.string().trim().min(1).max(300),
-  group_name: z.string().trim().max(120).nullable().optional(),
-}).strict();
-
-export const instructionSchema = z.object({
-  id: z.string().uuid().optional(),
-  text: z.string().trim().min(1).max(5_000),
-  timer_seconds: z.number().int().min(0).max(86_400).nullable().optional(),
-}).strict();
-
-export const tagInputSchema = z.object({
-  id: z.string().uuid().optional(),
-  name: z.string().trim().min(1).max(80),
-}).strict();
-
-const tagArraySchema = z.array(tagInputSchema).max(50).superRefine((tags, context) => {
-  const seen = new Set<string>();
-  tags.forEach((tag, index) => {
-    const normalized = tag.name.toLowerCase();
-    if (seen.has(normalized)) context.addIssue({ code: z.ZodIssueCode.custom, path: [index, 'name'], message: 'Tag names must be unique.' });
-    seen.add(normalized);
-  });
-});
-
-const scalarRecipeSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(5_000).default(''),
-  servings: z.number().int().min(1).max(1_000).nullable().optional(),
-  prep_minutes: nullableNonNegativeInteger,
-  cook_minutes: nullableNonNegativeInteger,
-  source_type: z.enum(['personal', 'online', 'ai']).default('personal'),
-  source_name: nullableShortText,
-  source_url: z.string().url().max(2_000).nullable().optional(),
-  image_key: z.string().uuid().nullable().optional(),
-  notes: z.string().trim().max(10_000).default(''),
-  favorite: z.boolean().default(false),
-});
-
-export const recipeInputSchema = scalarRecipeSchema.extend({
-  id: z.string().uuid().optional(),
-  ingredients: z.array(ingredientSchema).max(100).default([]),
-  instructions: z.array(instructionSchema).max(100).default([]),
-  tags: tagArraySchema.default([]),
-}).strict();
+export const recipeInputSchema = recipeDraftSchema.extend({ id: z.string().uuid().optional() }).strict();
 
 export const recipePutSchema = scalarRecipeSchema.extend({
   base_version: z.number().int().positive(),
-  ingredients: z.array(ingredientSchema).max(100).default([]),
-  instructions: z.array(instructionSchema).max(100).default([]),
+  ingredients: z.array(ingredientSchema).max(recipeLimits.ingredients).default([]),
+  instructions: z.array(instructionSchema).max(recipeLimits.instructions).default([]),
   tags: tagArraySchema.default([]),
 }).strict();
 
 export const recipePatchSchema = scalarRecipeSchema.partial().extend({
   base_version: z.number().int().positive(),
-  ingredients: z.array(ingredientSchema).max(100).optional(),
-  instructions: z.array(instructionSchema).max(100).optional(),
+  ingredients: z.array(ingredientSchema).max(recipeLimits.ingredients).optional(),
+  instructions: z.array(instructionSchema).max(recipeLimits.instructions).optional(),
   tags: tagArraySchema.optional(),
 }).strict().refine((value) => Object.keys(value).some((key) => key !== 'base_version'), 'At least one change is required.');
 
 export const recipeDeleteSchema = z.object({ base_version: z.number().int().positive() }).strict();
-
 export const tagCreateSchema = tagInputSchema.omit({ id: true });
 
 export const changesQuerySchema = z.object({
