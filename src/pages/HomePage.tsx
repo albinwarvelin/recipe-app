@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
+import { ConflictResolution } from '../components/ConflictResolution';
 import { ingredientLabel } from '../components/IngredientCombobox';
 import { CheckIcon, ChevronDownIcon, CloseIcon, MoreIcon, PlusIcon, SearchIcon, StarIcon } from '../components/Icons';
 import { RecipeCard } from '../components/RecipeCard';
@@ -12,7 +13,7 @@ import { SyncIndicator } from '../components/SyncIndicator';
 import type { LocalIngredientCatalog, LocalRecipe, LocalTag, RecipeConflict } from '../data/db';
 import { deleteLocalRecipe, saveLocalRecipe, setLocalFavorite, type CoverChange } from '../data/local-recipes';
 import { normalizeSearchValue } from '../data/normalize';
-import { useConflicts, useIngredientCatalog, useRecipes, useSyncState, useTags } from '../hooks/useLocalData';
+import { useConflicts, useIngredientCatalog, useRecipes, useSyncState, useTags, type LocalQueryState } from '../hooks/useLocalData';
 import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServer, syncNow } from '../sync/coordinator';
 
 type MatchMode = 'any' | 'all';
@@ -26,7 +27,7 @@ function setValues(params: URLSearchParams, key: string, values: string[]): URLS
   return next;
 }
 
-function Library({ recipes, catalog, tags, email }: { recipes: LocalRecipe[]; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; email?: string }) {
+function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: LocalRecipe[]; recipesStatus: LocalQueryState<LocalRecipe[]>['status']; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; email?: string }) {
   const sync = useSyncState();
   const [params, setParams] = useSearchParams();
   const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
@@ -152,59 +153,86 @@ function Library({ recipes, catalog, tags, email }: { recipes: LocalRecipe[]; ca
         </div>
         {activeFilters.length > 0 && <div className="active-filter-row" aria-label="Aktiva filter">{activeFilters.map((filter) => <button key={filter.key} type="button" onClick={filter.remove}>{filter.label}<CloseIcon size={14} /></button>)}<button className="clear-filters" type="button" onClick={() => setParams({}, { replace: true })}>Rensa alla</button></div>}
       </section>
-      {filtered.length ? <section className="recipe-grid" aria-label="Receptbibliotek">{filtered.map((recipe) => <RecipeCard key={recipe.id} recipe={recipe} to={`/recipes/${recipe.id}`} onFavorite={() => { void setLocalFavorite(recipe, !recipe.favorite).then(() => syncNow()); }} />)}</section> : <section className="empty-state"><div className="empty-state-icon" aria-hidden="true">✦</div><h2 className="heading-2">{recipes.length ? 'Inga recept matchar.' : 'Ditt kök börjar här.'}</h2><p className="text-body-muted">{recipes.length ? 'Prova en annan sökning eller ta bort ett filter.' : 'Lägg till ett recept med omslagsbild så finns det kvar även offline.'}</p>{!recipes.length && <Link className="primary-button" to="/recipes/new">Skapa första receptet</Link>}</section>}
+      {recipesStatus === 'loading' ? <section className="empty-state" role="status"><h2 className="heading-2">Läser lokala recept…</h2><p className="text-body-muted">Ditt offlinebibliotek öppnas på den här enheten.</p></section> : filtered.length ? <section className="recipe-grid" aria-label="Receptbibliotek">{filtered.map((recipe) => <RecipeCard key={recipe.id} recipe={recipe} to={`/recipes/${recipe.id}`} onFavorite={() => { void setLocalFavorite(recipe, !recipe.favorite).then(() => syncNow()); }} />)}</section> : <section className="empty-state"><div className="empty-state-icon" aria-hidden="true">✦</div><h2 className="heading-2">{recipes.length ? 'Inga recept matchar.' : 'Ditt kök börjar här.'}</h2><p className="text-body-muted">{recipes.length ? 'Prova en annan sökning eller ta bort ett filter.' : 'Lägg till ett recept med omslagsbild så finns det kvar även offline.'}</p>{!recipes.length && <Link className="primary-button" to="/recipes/new">Skapa första receptet</Link>}</section>}
     </main>
     <Link className="floating-add" to="/recipes/new" aria-label="Skapa recept"><PlusIcon size={28} /></Link>
   </div>;
 }
 
-function DetailRoute({ recipes, onDelete }: { recipes: LocalRecipe[]; onDelete: (recipe: LocalRecipe) => Promise<void> }) {
+function DetailRoute({ recipesState, onDelete }: { recipesState: LocalQueryState<LocalRecipe[]>; onDelete: (recipe: LocalRecipe) => Promise<void> }) {
   const { recipeId } = useParams();
-  const recipe = recipes.find((entry) => entry.id === recipeId);
-  if (!recipe) return <div className="route-message page-container"><h1 className="heading-1">Receptet hämtas…</h1><p className="text-body-muted">Om receptet inte visas kan det ha tagits bort.</p><Link to="/">Till recepten</Link></div>;
+  const recipe = recipesState.data.find((entry) => entry.id === recipeId);
+  if (!recipe) return <div className="route-message page-container"><h1 className="heading-1">{recipesState.status === 'loading' ? 'Receptet hämtas…' : 'Receptet finns inte på enheten'}</h1><p className="text-body-muted">{recipesState.status === 'loading' ? 'Det lokala offlinebiblioteket läses in.' : 'Det kan ha tagits bort eller ännu inte ha synkroniserats hit.'}</p><Link to="/">Till recepten</Link></div>;
   return <RecipeDetail recipe={recipe} backTo="/" onDelete={() => void onDelete(recipe)} />;
 }
 
-function EditorRoute({ recipes, catalog, tags, conflicts }: { recipes: LocalRecipe[]; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; conflicts: RecipeConflict[] }) {
+function EditorRoute({ recipesState, catalog, tags, conflictsState }: { recipesState: LocalQueryState<LocalRecipe[]>; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; conflictsState: LocalQueryState<RecipeConflict[]> }) {
   const { recipeId } = useParams();
   const navigate = useNavigate();
-  const conflict = conflicts.find((entry) => entry.entity_id === recipeId);
-  const recipe = recipeId ? (conflict?.local_recipe ?? recipes.find((entry) => entry.id === recipeId) ?? null) : null;
-  if (recipeId && !recipe) return <Navigate to="/" replace />;
-  async function save(draft: RecipeDraft, cover: CoverChange) {
-    if (conflict) {
-      if (cover.kind !== 'keep') throw new Error('Lös textkonflikten först; den befintliga bilden behålls.');
-      await resolveConflictKeepLocal(conflict, draft);
-      navigate(`/recipes/${conflict.entity_id}`, { replace: true });
-    } else {
-      const saved = await saveLocalRecipe(recipe, draft, cover);
-      navigate(`/recipes/${saved.id}`, { replace: true });
-      void syncNow();
-    }
+  const conflict = conflictsState.data.find((entry) => entry.entity_id === recipeId);
+  const recipe = recipeId ? (conflict?.local_recipe ?? recipesState.data.find((entry) => entry.id === recipeId) ?? null) : null;
+  if (conflict) return <Navigate to={`/recipes/${conflict.entity_id}/conflict`} replace />;
+  if (recipeId && !recipe) {
+    const loading = recipesState.status === 'loading' || conflictsState.status === 'loading';
+    return <div className="route-message page-container"><h1 className="heading-1">{loading ? 'Receptet hämtas…' : 'Receptet finns inte på enheten'}</h1><p className="text-body-muted">{loading ? 'Det lokala offlinebiblioteket läses in.' : 'Det kan ha tagits bort eller ännu inte ha synkroniserats hit.'}</p><Link to="/">Till recepten</Link></div>;
   }
-  return <RecipeEditor recipe={recipe} title={conflict ? 'Slå samman recept' : undefined} catalog={catalog} tags={tags} onCancel={() => navigate(recipe ? `/recipes/${recipe.id}` : '/')} onSave={save} />;
+  async function save(draft: RecipeDraft, cover: CoverChange) {
+    const saved = await saveLocalRecipe(recipe, draft, cover);
+    navigate(`/recipes/${saved.id}`, { replace: true });
+    void syncNow();
+  }
+  return <RecipeEditor recipe={recipe} catalog={catalog} tags={tags} onCancel={() => navigate(recipe ? `/recipes/${recipe.id}` : '/')} onSave={save} />;
+}
+
+function ConflictRoute({ conflictsState, catalog, tags }: { conflictsState: LocalQueryState<RecipeConflict[]>; catalog: LocalIngredientCatalog[]; tags: LocalTag[] }) {
+  const { recipeId } = useParams();
+  const navigate = useNavigate();
+  const conflict = conflictsState.data.find((entry) => entry.entity_id === recipeId);
+  if (!conflict) {
+    if (conflictsState.status === 'loading') return <div className="route-message page-container"><h1 className="heading-1">Konflikten hämtas…</h1><p className="text-body-muted">Lokala synkdata läses in.</p></div>;
+    return <Navigate to={recipeId ? `/recipes/${recipeId}` : '/'} replace />;
+  }
+  async function save(draft: RecipeDraft, cover: CoverChange) {
+    if (cover.kind !== 'keep') throw new Error('En ny bild kan väljas efter att konflikten har lösts.');
+    const resolvedId = await resolveConflictKeepLocal(conflict!, draft);
+    navigate(`/recipes/${resolvedId}`, { replace: true });
+  }
+  return <ConflictResolution conflict={conflict} catalog={catalog} tags={tags} onCancel={() => navigate(`/recipes/${conflict.entity_id}`)} onSave={save} />;
 }
 
 export function HomePage({ email }: { email?: string }) {
-  const recipes = useRecipes();
-  const conflicts = useConflicts();
+  const recipesState = useRecipes();
+  const conflictsState = useConflicts();
+  const recipes = recipesState.data;
+  const conflicts = conflictsState.data;
   const catalog = useIngredientCatalog();
   const tags = useTags();
   const sync = useSyncState();
   const navigate = useNavigate();
+  const location = useLocation();
   useEffect(() => installSyncTriggers(), []);
 
   async function remove(recipe: LocalRecipe) {
     if (!window.confirm(`Ta bort ”${recipe.title}”? Ändringen synkroniseras mellan dina enheter.`)) return;
     await deleteLocalRecipe(recipe); navigate('/'); void syncNow();
   }
+  async function keepLocal(conflict: RecipeConflict) {
+    const resolvedId = await resolveConflictKeepLocal(conflict);
+    navigate(`/recipes/${resolvedId}`, { replace: true });
+  }
+  async function keepServer(conflict: RecipeConflict) {
+    await resolveConflictKeepServer(conflict);
+    navigate(conflict.server_recipe ? `/recipes/${conflict.entity_id}` : '/', { replace: true });
+  }
 
-  const dialog = conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void resolveConflictKeepLocal(conflicts[0])} onKeepServer={() => void resolveConflictKeepServer(conflicts[0])} onMerge={() => navigate(`/recipes/${conflicts[0].entity_id}/edit`)} />;
+  const resolvingConflict = /^\/recipes\/[^/]+\/conflict$/.test(location.pathname);
+  const dialog = !resolvingConflict && conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void keepLocal(conflicts[0])} onKeepServer={() => void keepServer(conflicts[0])} onMerge={() => navigate(`/recipes/${conflicts[0].entity_id}/conflict`)} />;
   return <><Routes>
-    <Route path="/" element={<Library recipes={recipes} catalog={catalog} tags={tags} email={email} />} />
-    <Route path="/recipes/new" element={<EditorRoute recipes={recipes} catalog={catalog} tags={tags} conflicts={conflicts} />} />
-    <Route path="/recipes/:recipeId" element={<DetailRoute recipes={recipes} onDelete={remove} />} />
-    <Route path="/recipes/:recipeId/edit" element={<EditorRoute recipes={recipes} catalog={catalog} tags={tags} conflicts={conflicts} />} />
+    <Route path="/" element={<Library recipes={recipes} recipesStatus={recipesState.status} catalog={catalog} tags={tags} email={email} />} />
+    <Route path="/recipes/new" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
+    <Route path="/recipes/:recipeId" element={<DetailRoute recipesState={recipesState} onDelete={remove} />} />
+    <Route path="/recipes/:recipeId/edit" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
+    <Route path="/recipes/:recipeId/conflict" element={<ConflictRoute conflictsState={conflictsState} catalog={catalog} tags={tags} />} />
     <Route path="/settings" element={<SettingsView email={email} sync={sync} onBack={() => navigate('/')} onCleared={() => navigate('/')} />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>{dialog}</>;

@@ -287,9 +287,10 @@ export async function resolveConflictKeepServer(conflict: RecipeConflict): Promi
   void syncNow();
 }
 
-export async function resolveConflictKeepLocal(conflict: RecipeConflict, merged?: RecipeDraft): Promise<void> {
-  const draft = merged ?? recipeDraft(conflict.local_recipe);
-  await db.transaction('rw', db.recipes, db.outbox, db.conflicts, async () => {
+export async function resolveConflictKeepLocal(conflict: RecipeConflict, merged?: RecipeDraft): Promise<string> {
+  let draft = merged ?? recipeDraft(conflict.local_recipe);
+  let resolvedEntityId = conflict.entity_id;
+  await db.transaction('rw', db.recipes, db.images, db.outbox, db.conflicts, async () => {
     const operations = await db.outbox.where('entity_id').equals(conflict.entity_id).toArray();
     const recipeOperations = operations.filter((item) => item.type.startsWith('recipe-'));
     const operationIds = new Set(recipeOperations.map((item) => item.operation_id));
@@ -297,14 +298,30 @@ export async function resolveConflictKeepLocal(conflict: RecipeConflict, merged?
     await db.outbox.bulkDelete(recipeOperations.flatMap((item) => item.sequence === undefined ? [] : [item.sequence]));
     if (!conflict.server_recipe) {
       const restoredId = crypto.randomUUID();
+      resolvedEntityId = restoredId;
       const timestamp = new Date().toISOString();
       const operationId = crypto.randomUUID();
+      let imageDependency: string | null = null;
+      if (draft.image_key) {
+        const image = await db.images.get(draft.image_key);
+        if (image?.full_blob) {
+          imageDependency = crypto.randomUUID();
+          await db.images.update(image.id, { remote: false });
+          await db.outbox.add({
+            operation_id: imageDependency, entity_id: image.id, type: 'image-upload', created_at: timestamp,
+            last_attempt_at: null, attempt_count: 0, base_server_version: 0, local_version: conflict.local_recipe.local_version + 1,
+            status: 'pending', last_error_code: null, depends_on: null,
+          });
+        } else {
+          draft = { ...draft, image_key: null };
+        }
+      }
       await db.recipes.delete(conflict.entity_id);
       await db.recipes.put({ ...conflict.local_recipe, ...draft, id: restoredId, version: 0, local_version: conflict.local_recipe.local_version + 1, sync_status: 'pending', created_at: timestamp, updated_at: timestamp, deleted_at: null });
       await db.outbox.add({
         operation_id: operationId, entity_id: restoredId, type: 'recipe-create', payload: { ...draft, id: restoredId },
         created_at: timestamp, last_attempt_at: null, attempt_count: 0, base_server_version: 0,
-        local_version: conflict.local_recipe.local_version + 1, status: 'pending', last_error_code: null, depends_on: null,
+        local_version: conflict.local_recipe.local_version + 1, status: 'pending', last_error_code: null, depends_on: imageDependency,
       });
       for (const dependent of dependents) if (dependent.sequence !== undefined) await db.outbox.update(dependent.sequence, { depends_on: operationId });
       await db.conflicts.delete(conflict.id);
@@ -322,6 +339,7 @@ export async function resolveConflictKeepLocal(conflict: RecipeConflict, merged?
   });
   await updatePendingCount();
   void syncNow();
+  return resolvedEntityId;
 }
 
 export async function requestPersistentStorage(): Promise<'granted' | 'best-effort' | 'unavailable'> {

@@ -17,18 +17,20 @@ export const emptyRecipeDraft: RecipeDraft = {
 
 function optionalNumber(value: string): number | null { return value === '' ? null : Number(value); }
 
-export function RecipeEditor({ recipe, title, catalog, tags, onCancel, onSave }: {
+export function RecipeEditor({ recipe, initialDraft, title, catalog, tags, allowCoverChanges = true, onCancel, onSave }: {
   recipe: LocalRecipe | null;
+  initialDraft?: RecipeDraft;
   title?: string;
   catalog: LocalIngredientCatalog[];
   tags: LocalTag[];
+  allowCoverChanges?: boolean;
   onCancel: () => void;
   onSave: (draft: RecipeDraft, cover: CoverChange) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<RecipeDraft>(() => recipe ? draftFromLocalRecipe(recipe) : structuredClone(emptyRecipeDraft));
+  const [draft, setDraft] = useState<RecipeDraft>(() => initialDraft ? structuredClone(initialDraft) : recipe ? draftFromLocalRecipe(recipe) : structuredClone(emptyRecipeDraft));
   const [cover, setCover] = useState<CoverChange>({ kind: 'keep' });
   const [preview, setPreview] = useState<string | null>(null);
-  const existingImage = useImageUrl(recipe?.image_key);
+  const existingImage = useImageUrl(draft.image_key);
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -86,11 +88,11 @@ export function RecipeEditor({ recipe, title, catalog, tags, onCancel, onSave }:
             {!coverUrl && <span className="cover-placeholder"><ImageIcon /><strong>{processing ? 'Förbereder bild…' : 'Lägg till en omslagsbild'}</strong><small>Bilden visas på receptkortet</small></span>}
             {coverUrl && processing && <span className="cover-processing">Förbereder bild…</span>}
           </div>
-          <div className="cover-actions">
+          {allowCoverChanges && <div className="cover-actions">
             <label className="secondary-button file-button"><ImageIcon size={18} />{coverUrl ? 'Byt bild' : 'Välj bild'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={(event) => void chooseImage(event.target.files?.[0])} /></label>
             {coverUrl && <button className="button-quiet button-danger" type="button" onClick={() => { if (preview) URL.revokeObjectURL(preview); setCover({ kind: 'remove' }); setPreview(null); }}><TrashIcon />Ta bort</button>}
-          </div>
-          <p className="field-help">JPEG, PNG, WebP, HEIC eller HEIF. Bilden omvandlas privat på enheten.</p>
+          </div>}
+          <p className="field-help">{allowCoverChanges ? 'JPEG, PNG, WebP, HEIC eller HEIF. Bilden omvandlas privat på enheten.' : 'Omslagsbilden valdes i konfliktgranskningen.'}</p>
         </section>
       </aside>
 

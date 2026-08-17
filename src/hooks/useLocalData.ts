@@ -3,26 +3,37 @@ import { useEffect, useState } from 'react';
 import { db, type LocalImage, type LocalIngredientCatalog, type LocalRecipe, type LocalTag, type RecipeConflict } from '../data/db';
 import { subscribeSync, syncSnapshot, type SyncSnapshot } from '../sync/coordinator';
 
-export function useRecipes(): LocalRecipe[] {
-  const [recipes, setRecipes] = useState<LocalRecipe[]>([]);
+export type LocalQueryState<T> =
+  | { status: 'loading'; data: T }
+  | { status: 'ready'; data: T }
+  | { status: 'error'; data: T; error: unknown };
+
+export function useRecipes(): LocalQueryState<LocalRecipe[]> {
+  const [state, setState] = useState<LocalQueryState<LocalRecipe[]>>({ status: 'loading', data: [] });
   useEffect(() => {
     const subscription = liveQuery(async () => (await db.recipes.toArray())
       .filter((recipe) => !recipe.deleted_at)
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at)))
-      .subscribe({ next: setRecipes, error: (error) => console.error(error) });
+      .subscribe({
+        next: (recipes) => setState({ status: 'ready', data: recipes }),
+        error: (error) => { console.error(error); setState((current) => ({ status: 'error', data: current.data, error })); },
+      });
     return () => subscription.unsubscribe();
   }, []);
-  return recipes;
+  return state;
 }
 
-export function useConflicts(): RecipeConflict[] {
-  const [conflicts, setConflicts] = useState<RecipeConflict[]>([]);
+export function useConflicts(): LocalQueryState<RecipeConflict[]> {
+  const [state, setState] = useState<LocalQueryState<RecipeConflict[]>>({ status: 'loading', data: [] });
   useEffect(() => {
     const subscription = liveQuery(() => db.conflicts.orderBy('created_at').toArray())
-      .subscribe({ next: setConflicts, error: (error) => console.error(error) });
+      .subscribe({
+        next: (conflicts) => setState({ status: 'ready', data: conflicts }),
+        error: (error) => { console.error(error); setState((current) => ({ status: 'error', data: current.data, error })); },
+      });
     return () => subscription.unsubscribe();
   }, []);
-  return conflicts;
+  return state;
 }
 
 export function useIngredientCatalog(): LocalIngredientCatalog[] {
