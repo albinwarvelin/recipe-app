@@ -12,11 +12,11 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'Recipe App',
-        short_name: 'Recipes',
-        description: 'A private, local-first recipe library.',
-        theme_color: '#f4f2ee',
-        background_color: '#f4f2ee',
+        name: 'Recept',
+        short_name: 'Recept',
+        description: 'Ett privat receptbibliotek som fungerar offline.',
+        theme_color: '#ffffff',
+        background_color: '#f5f7fb',
         display: 'standalone',
         start_url: '/',
         icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]

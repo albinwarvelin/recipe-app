@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { useEffect, useState } from 'react';
-import { db, type LocalImage, type LocalRecipe, type RecipeConflict } from '../data/db';
+import { db, type LocalImage, type LocalIngredientCatalog, type LocalRecipe, type LocalTag, type RecipeConflict } from '../data/db';
 import { subscribeSync, syncSnapshot, type SyncSnapshot } from '../sync/coordinator';
 
 export function useRecipes(): LocalRecipe[] {
@@ -23,6 +23,26 @@ export function useConflicts(): RecipeConflict[] {
     return () => subscription.unsubscribe();
   }, []);
   return conflicts;
+}
+
+export function useIngredientCatalog(): LocalIngredientCatalog[] {
+  const [entries, setEntries] = useState<LocalIngredientCatalog[]>([]);
+  useEffect(() => {
+    const subscription = liveQuery(() => db.ingredientCatalog.toArray())
+      .subscribe({ next: setEntries, error: (error) => console.error(error) });
+    return () => subscription.unsubscribe();
+  }, []);
+  return entries;
+}
+
+export function useTags(): LocalTag[] {
+  const [tags, setTags] = useState<LocalTag[]>([]);
+  useEffect(() => {
+    const subscription = liveQuery(() => db.tags.orderBy('name').toArray())
+      .subscribe({ next: setTags, error: (error) => console.error(error) });
+    return () => subscription.unsubscribe();
+  }, []);
+  return tags;
 }
 
 export function useSyncState(): SyncSnapshot {

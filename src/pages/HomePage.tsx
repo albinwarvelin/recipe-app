@@ -1,63 +1,211 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
+import { ingredientLabel } from '../components/IngredientCombobox';
+import { CheckIcon, ChevronDownIcon, CloseIcon, MoreIcon, PlusIcon, SearchIcon, StarIcon } from '../components/Icons';
 import { RecipeCard } from '../components/RecipeCard';
 import { RecipeDetail } from '../components/RecipeDetail';
 import { RecipeEditor } from '../components/RecipeEditor';
 import { SettingsView } from '../components/SettingsView';
 import { SyncIndicator } from '../components/SyncIndicator';
-import type { LocalRecipe, RecipeConflict } from '../data/db';
+import type { LocalIngredientCatalog, LocalRecipe, LocalTag, RecipeConflict } from '../data/db';
 import { deleteLocalRecipe, saveLocalRecipe, setLocalFavorite, type CoverChange } from '../data/local-recipes';
-import { useConflicts, useRecipes, useSyncState } from '../hooks/useLocalData';
+import { normalizeSearchValue } from '../data/normalize';
+import { useConflicts, useIngredientCatalog, useRecipes, useSyncState, useTags } from '../hooks/useLocalData';
 import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServer, syncNow } from '../sync/coordinator';
 
-type View = { kind: 'library' } | { kind: 'detail'; recipeId: string } | { kind: 'editor'; recipe: LocalRecipe | null; conflict?: RecipeConflict } | { kind: 'settings' };
+type MatchMode = 'any' | 'all';
+type SortMode = 'updated' | 'title' | 'time';
+type OpenPopover = 'app' | 'ingredients' | 'tags' | 'time' | 'sort' | null;
+
+function setValues(params: URLSearchParams, key: string, values: string[]): URLSearchParams {
+  const next = new URLSearchParams(params);
+  next.delete(key);
+  for (const value of values) next.append(key, value);
+  return next;
+}
+
+function Library({ recipes, catalog, tags, email }: { recipes: LocalRecipe[]; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; email?: string }) {
+  const sync = useSyncState();
+  const [params, setParams] = useSearchParams();
+  const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
+  const [ingredientSearch, setIngredientSearch] = useState('');
+  const ingredientInput = useRef<HTMLInputElement>(null);
+  const query = params.get('q') ?? '';
+  const ingredientIds = params.getAll('ingredient');
+  const tagIds = params.getAll('tag');
+  const ingredientMode: MatchMode = params.get('ingredientMode') === 'all' ? 'all' : 'any';
+  const tagMode: MatchMode = params.get('tagMode') === 'all' ? 'all' : 'any';
+  const favoritesOnly = params.get('favorite') === '1';
+  const maxTime = Number(params.get('maxTime') ?? 0);
+  const sort = (['updated', 'title', 'time'].includes(params.get('sort') ?? '') ? params.get('sort') : 'updated') as SortMode;
+  const catalogById = useMemo(() => new Map(catalog.map((entry) => [entry.id, entry])), [catalog]);
+  const tagsById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags]);
+
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest('[data-popover-root]')) { setOpenPopover(null); setIngredientSearch(''); }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpenPopover(null); setIngredientSearch(''); } };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
+
+  function updateParam(key: string, value: string | null) {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value); else next.delete(key);
+    setParams(next, { replace: true, preventScrollReset: true });
+  }
+  function toggleList(key: string, current: string[], value: string) {
+    const nextValues = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+    setParams(setValues(params, key, nextValues), { replace: true, preventScrollReset: true });
+  }
+
+  const filtered = useMemo(() => {
+    const term = normalizeSearchValue(query);
+    const list = recipes.filter((recipe) => {
+      if (favoritesOnly && !recipe.favorite) return false;
+      const totalTime = (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0);
+      if (maxTime > 0 && totalTime > maxTime) return false;
+      if (term && ![recipe.title, recipe.description, ...recipe.tags.map((tag) => tag.name), ...recipe.ingredients.map((item) => item.name)].some((value) => normalizeSearchValue(value).includes(term))) return false;
+      const recipeIngredientIds = new Set(recipe.ingredients.flatMap((item) => item.catalog_id ? [item.catalog_id] : []));
+      const ingredientMatches = ingredientIds.map((id) => recipeIngredientIds.has(id));
+      if (ingredientMatches.length && !(ingredientMode === 'all' ? ingredientMatches.every(Boolean) : ingredientMatches.some(Boolean))) return false;
+      const recipeTagIds = new Set(recipe.tags.flatMap((tag) => tag.id ? [tag.id] : []));
+      const tagMatches = tagIds.map((id) => recipeTagIds.has(id));
+      if (tagMatches.length && !(tagMode === 'all' ? tagMatches.every(Boolean) : tagMatches.some(Boolean))) return false;
+      return true;
+    });
+    return list.sort((left, right) => sort === 'title'
+      ? left.title.localeCompare(right.title, 'sv')
+      : sort === 'time'
+        ? ((left.prep_minutes ?? 0) + (left.cook_minutes ?? 0)) - ((right.prep_minutes ?? 0) + (right.cook_minutes ?? 0))
+        : right.updated_at.localeCompare(left.updated_at));
+  }, [favoritesOnly, ingredientIds.join('|'), ingredientMode, maxTime, query, recipes, sort, tagIds.join('|'), tagMode]);
+
+  const ingredientAlternatives = useMemo(() => {
+    const term = normalizeSearchValue(ingredientSearch);
+    return catalog.map((entry) => {
+      const names = entry.names.map((name) => name.normalized_name);
+      const score = !term ? 1 : names.some((name) => name.startsWith(term)) ? 0 : names.some((name) => name.includes(term)) ? 1 : 2;
+      return { entry, score };
+    }).filter(({ score }) => score < 2)
+      .sort((left, right) => Number(!ingredientIds.includes(left.entry.id)) - Number(!ingredientIds.includes(right.entry.id)) || left.score - right.score || ingredientLabel(left.entry).localeCompare(ingredientLabel(right.entry), 'sv'))
+      .slice(0, 40);
+  }, [catalog, ingredientIds.join('|'), ingredientSearch]);
+
+  const timeLabel = maxTime ? `Högst ${maxTime} min` : 'Alla';
+  const sortLabel = sort === 'title' ? 'Namn' : sort === 'time' ? 'Kortast tid' : 'Senast ändrad';
+  const togglePopover = (popover: Exclude<OpenPopover, null>) => {
+    const next = openPopover === popover ? null : popover;
+    setOpenPopover(next);
+    if (next !== 'ingredients') setIngredientSearch('');
+  };
+
+  const activeFilters = [
+    ...(query ? [{ key: 'q', label: `Sökning: ${query}`, remove: () => updateParam('q', null) }] : []),
+    ...(favoritesOnly ? [{ key: 'favorite', label: 'Favoriter', remove: () => updateParam('favorite', null) }] : []),
+    ...(maxTime ? [{ key: 'maxTime', label: `Högst ${maxTime} min`, remove: () => updateParam('maxTime', null) }] : []),
+    ...ingredientIds.map((id) => ({ key: `ingredient-${id}`, label: ingredientLabel(catalogById.get(id)!), remove: () => toggleList('ingredient', ingredientIds, id) })).filter((item) => item.label),
+    ...tagIds.map((id) => ({ key: `tag-${id}`, label: tagsById.get(id)?.name ?? '', remove: () => toggleList('tag', tagIds, id) })).filter((item) => item.label),
+  ];
+
+  return <div className="app-shell">
+    <header className="navigation-bar">
+      <div className="navigation-bar-inner page-container">
+        <div><p className="text-eyebrow">Privat kök</p><h1 className="heading-1">Recept</h1></div>
+        <div className="header-actions"><SyncIndicator state={sync} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut{email ? ` (${email})` : ''}</a></div>}</div></div>
+      </div>
+    </header>
+    <main className="library-content page-container">
+      {(sync.phase === 'offline' || sync.phase === 'auth-required' || sync.phase === 'error') && <div className={`offline-banner ${sync.phase}`}><span>{sync.phase === 'offline' ? 'Offline — ändringar sparas på den här enheten.' : sync.message ?? 'Synkronisering är inte tillgänglig.'}</span>{sync.phase === 'auth-required' && <button type="button" onClick={() => window.location.assign('/')}>Logga in</button>}{sync.phase === 'error' && <button type="button" onClick={() => void syncNow()}>Försök igen</button>}</div>}
+      <section className="library-controls">
+        <label className="search-field"><SearchIcon /><input type="search" value={query} onChange={(event) => updateParam('q', event.target.value)} placeholder="Sök bland recept, ingredienser och taggar" aria-label="Sök recept" /></label>
+        <div className="filter-toolbar">
+          <div className="filter-control ingredient-filter" data-popover-root>
+            <div className={`ingredient-filter-trigger ${openPopover === 'ingredients' ? 'is-open' : ''}`}>
+              <input ref={ingredientInput} type="search" value={ingredientSearch} onFocus={() => setOpenPopover('ingredients')} onChange={(event) => { setIngredientSearch(event.target.value); setOpenPopover('ingredients'); }} placeholder={ingredientIds.length ? `Ingredienser (${ingredientIds.length})` : 'Ingredienser'} aria-label="Sök och filtrera på ingredienser" aria-expanded={openPopover === 'ingredients'} aria-controls="ingredient-filter-options" />
+              <button type="button" aria-label="Visa ingredienser" onClick={() => {
+                if (openPopover === 'ingredients') { setOpenPopover(null); setIngredientSearch(''); }
+                else { setOpenPopover('ingredients'); requestAnimationFrame(() => ingredientInput.current?.focus()); }
+              }}><ChevronDownIcon className={openPopover === 'ingredients' ? 'is-rotated' : ''} /></button>
+            </div>
+            {openPopover === 'ingredients' && <div className="filter-popover ingredient-filter-popover" id="ingredient-filter-options">
+              <div className="mode-switch" aria-label="Matchning av ingredienser"><button type="button" className={ingredientMode === 'any' ? 'active' : ''} onClick={() => updateParam('ingredientMode', 'any')}>Någon</button><button type="button" className={ingredientMode === 'all' ? 'active' : ''} onClick={() => updateParam('ingredientMode', 'all')}>Alla</button></div>
+              <div className="filter-options">{ingredientAlternatives.length ? ingredientAlternatives.map(({ entry }) => <label key={entry.id}><input type="checkbox" checked={ingredientIds.includes(entry.id)} onChange={() => toggleList('ingredient', ingredientIds, entry.id)} /><span>{ingredientLabel(entry)}</span></label>) : <p className="filter-empty">Ingen ingrediens matchar.</p>}</div>
+            </div>}
+          </div>
+
+          <div className="filter-control" data-popover-root><button className="filter-trigger" type="button" aria-expanded={openPopover === 'tags'} onClick={() => togglePopover('tags')}><span>Taggar{tagIds.length ? ` (${tagIds.length})` : ''}</span><ChevronDownIcon className={openPopover === 'tags' ? 'is-rotated' : ''} /></button>{openPopover === 'tags' && <div className="filter-popover"><div className="mode-switch" aria-label="Matchning av taggar"><button type="button" className={tagMode === 'any' ? 'active' : ''} onClick={() => updateParam('tagMode', 'any')}>Någon</button><button type="button" className={tagMode === 'all' ? 'active' : ''} onClick={() => updateParam('tagMode', 'all')}>Alla</button></div><div className="filter-options">{tags.map((tag) => <label key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggleList('tag', tagIds, tag.id)} /><span>{tag.name}</span></label>)}</div></div>}</div>
+
+          <button className={favoritesOnly ? 'filter-trigger filter-button active' : 'filter-trigger filter-button'} type="button" onClick={() => updateParam('favorite', favoritesOnly ? null : '1')}><StarIcon /><span>Favoriter</span></button>
+
+          <div className="filter-control" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'time'} onClick={() => togglePopover('time')}><span className="filter-trigger-label">Tid</span><span>{timeLabel}</span><ChevronDownIcon className={openPopover === 'time' ? 'is-rotated' : ''} /></button>{openPopover === 'time' && <div className="filter-popover filter-choice-popover">{[['', 'Alla'], ['15', 'Högst 15 min'], ['30', 'Högst 30 min'], ['60', 'Högst 60 min']].map(([value, label]) => <button key={value || 'all'} type="button" className="filter-choice" onClick={() => { updateParam('maxTime', value || null); setOpenPopover(null); }}><span>{label}</span>{String(maxTime || '') === value && <CheckIcon />}</button>)}</div>}</div>
+
+          <div className="filter-control" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'sort'} onClick={() => togglePopover('sort')}><span className="filter-trigger-label">Sortera</span><span>{sortLabel}</span><ChevronDownIcon className={openPopover === 'sort' ? 'is-rotated' : ''} /></button>{openPopover === 'sort' && <div className="filter-popover filter-choice-popover align-right">{([['updated', 'Senast ändrad'], ['title', 'Namn'], ['time', 'Kortast tid']] as Array<[SortMode, string]>).map(([value, label]) => <button key={value} type="button" className="filter-choice" onClick={() => { updateParam('sort', value === 'updated' ? null : value); setOpenPopover(null); }}><span>{label}</span>{sort === value && <CheckIcon />}</button>)}</div>}</div>
+        </div>
+        {activeFilters.length > 0 && <div className="active-filter-row" aria-label="Aktiva filter">{activeFilters.map((filter) => <button key={filter.key} type="button" onClick={filter.remove}>{filter.label}<CloseIcon size={14} /></button>)}<button className="clear-filters" type="button" onClick={() => setParams({}, { replace: true })}>Rensa alla</button></div>}
+      </section>
+      {filtered.length ? <section className="recipe-grid" aria-label="Receptbibliotek">{filtered.map((recipe) => <RecipeCard key={recipe.id} recipe={recipe} to={`/recipes/${recipe.id}`} onFavorite={() => { void setLocalFavorite(recipe, !recipe.favorite).then(() => syncNow()); }} />)}</section> : <section className="empty-state"><div className="empty-state-icon" aria-hidden="true">✦</div><h2 className="heading-2">{recipes.length ? 'Inga recept matchar.' : 'Ditt kök börjar här.'}</h2><p className="text-body-muted">{recipes.length ? 'Prova en annan sökning eller ta bort ett filter.' : 'Lägg till ett recept med omslagsbild så finns det kvar även offline.'}</p>{!recipes.length && <Link className="primary-button" to="/recipes/new">Skapa första receptet</Link>}</section>}
+    </main>
+    <Link className="floating-add" to="/recipes/new" aria-label="Skapa recept"><PlusIcon size={28} /></Link>
+  </div>;
+}
+
+function DetailRoute({ recipes, onDelete }: { recipes: LocalRecipe[]; onDelete: (recipe: LocalRecipe) => Promise<void> }) {
+  const { recipeId } = useParams();
+  const recipe = recipes.find((entry) => entry.id === recipeId);
+  if (!recipe) return <div className="route-message page-container"><h1 className="heading-1">Receptet hämtas…</h1><p className="text-body-muted">Om receptet inte visas kan det ha tagits bort.</p><Link to="/">Till recepten</Link></div>;
+  return <RecipeDetail recipe={recipe} backTo="/" onDelete={() => void onDelete(recipe)} />;
+}
+
+function EditorRoute({ recipes, catalog, tags, conflicts }: { recipes: LocalRecipe[]; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; conflicts: RecipeConflict[] }) {
+  const { recipeId } = useParams();
+  const navigate = useNavigate();
+  const conflict = conflicts.find((entry) => entry.entity_id === recipeId);
+  const recipe = recipeId ? (conflict?.local_recipe ?? recipes.find((entry) => entry.id === recipeId) ?? null) : null;
+  if (recipeId && !recipe) return <Navigate to="/" replace />;
+  async function save(draft: RecipeDraft, cover: CoverChange) {
+    if (conflict) {
+      if (cover.kind !== 'keep') throw new Error('Lös textkonflikten först; den befintliga bilden behålls.');
+      await resolveConflictKeepLocal(conflict, draft);
+      navigate(`/recipes/${conflict.entity_id}`, { replace: true });
+    } else {
+      const saved = await saveLocalRecipe(recipe, draft, cover);
+      navigate(`/recipes/${saved.id}`, { replace: true });
+      void syncNow();
+    }
+  }
+  return <RecipeEditor recipe={recipe} title={conflict ? 'Slå samman recept' : undefined} catalog={catalog} tags={tags} onCancel={() => navigate(recipe ? `/recipes/${recipe.id}` : '/')} onSave={save} />;
+}
 
 export function HomePage({ email }: { email?: string }) {
   const recipes = useRecipes();
   const conflicts = useConflicts();
+  const catalog = useIngredientCatalog();
+  const tags = useTags();
   const sync = useSyncState();
-  const [view, setView] = useState<View>({ kind: 'library' });
-  const [query, setQuery] = useState('');
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-
+  const navigate = useNavigate();
   useEffect(() => installSyncTriggers(), []);
-  const selected = view.kind === 'detail' ? recipes.find((recipe) => recipe.id === view.recipeId) : undefined;
-  useEffect(() => { if (view.kind === 'detail' && !selected) setView({ kind: 'library' }); }, [selected, view.kind]);
 
-  const filtered = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    return recipes.filter((recipe) => (!favoritesOnly || recipe.favorite) && (!term || [recipe.title, recipe.description, ...recipe.tags.map((tag) => tag.name), ...recipe.ingredients.map((item) => item.name)].some((value) => value.toLowerCase().includes(term))));
-  }, [favoritesOnly, query, recipes]);
-
-  async function save(recipe: LocalRecipe | null, draft: RecipeDraft, cover: CoverChange) {
-    const saved = await saveLocalRecipe(recipe, draft, cover);
-    setView({ kind: 'detail', recipeId: saved.id });
-    void syncNow();
-  }
   async function remove(recipe: LocalRecipe) {
-    if (!window.confirm(`Delete “${recipe.title}”? The deletion will synchronize across devices.`)) return;
-    await deleteLocalRecipe(recipe); setView({ kind: 'library' }); void syncNow();
+    if (!window.confirm(`Ta bort ”${recipe.title}”? Ändringen synkroniseras mellan dina enheter.`)) return;
+    await deleteLocalRecipe(recipe); navigate('/'); void syncNow();
   }
 
-  if (view.kind === 'settings') return <SettingsView email={email} sync={sync} onBack={() => setView({ kind: 'library' })} onCleared={() => setView({ kind: 'library' })} />;
-  if (view.kind === 'editor') return <RecipeEditor recipe={view.recipe} title={view.conflict ? 'Merge recipe' : undefined} onCancel={() => setView(view.recipe ? { kind: 'detail', recipeId: view.recipe.id } : { kind: 'library' })} onSave={async (draft, cover) => {
-    if (view.conflict) {
-      if (cover.kind !== 'keep') throw new Error('Resolve the text conflict first; the existing cover is preserved.');
-      await resolveConflictKeepLocal(view.conflict, draft); setView({ kind: 'detail', recipeId: view.conflict.entity_id });
-    } else await save(view.recipe, draft, cover);
-  }} />;
-  if (view.kind === 'detail' && selected) return <><RecipeDetail recipe={selected} onBack={() => setView({ kind: 'library' })} onEdit={() => setView({ kind: 'editor', recipe: selected })} onDelete={() => void remove(selected)} />{conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void resolveConflictKeepLocal(conflicts[0])} onKeepServer={() => void resolveConflictKeepServer(conflicts[0])} onMerge={() => setView({ kind: 'editor', recipe: conflicts[0].local_recipe, conflict: conflicts[0] })} />}</>;
-
-  return <div className="app-shell">
-    <header className="navigation-bar"><div><p className="eyebrow">Private kitchen</p><h1>Recipes</h1></div><div className="header-actions"><SyncIndicator state={sync} /><div className="menu-wrap"><button className="menu-button" type="button" aria-label="Open menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>•••</button>{menuOpen && <div className="app-menu"><button type="button" onClick={() => { setMenuOpen(false); void syncNow(); }}>Sync now</button><button type="button" onClick={() => { setMenuOpen(false); setView({ kind: 'settings' }); }}>Settings</button><a href="/cdn-cgi/access/logout">Sign out</a></div>}</div></div></header>
-    <main className="library-content">
-      {(sync.phase === 'offline' || sync.phase === 'auth-required' || sync.phase === 'error') && <div className={`offline-banner ${sync.phase}`}><span>{sync.phase === 'offline' ? 'Offline — changes are saved on this device' : sync.message ?? 'Synchronization is unavailable'}</span>{sync.phase === 'auth-required' && <button type="button" onClick={() => window.location.assign('/')}>Sign in</button>}{sync.phase === 'error' && <button type="button" onClick={() => void syncNow()}>Try again</button>}</div>}
-      <section className="library-controls"><label className="search-field"><span aria-hidden="true">⌕</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search recipes or ingredients" aria-label="Search recipes" /></label><div className="filter-row"><button className={!favoritesOnly ? 'active' : ''} type="button" onClick={() => setFavoritesOnly(false)}>All recipes</button><button className={favoritesOnly ? 'active' : ''} type="button" onClick={() => setFavoritesOnly(true)}>Favorites</button></div></section>
-      {filtered.length ? <section className="recipe-grid" aria-label="Recipe library">{filtered.map((recipe) => <RecipeCard key={recipe.id} recipe={recipe} onOpen={() => setView({ kind: 'detail', recipeId: recipe.id })} onFavorite={() => { void setLocalFavorite(recipe, !recipe.favorite).then(() => syncNow()); }} />)}</section> : <section className="empty-state"><div className="empty-state-icon" aria-hidden="true">✦</div><h2>{recipes.length ? 'No recipes match.' : 'Your kitchen starts here.'}</h2><p>{recipes.length ? 'Try another search or filter.' : 'Add a recipe with a cover photo, then it will remain available even when you are offline.'}</p>{!recipes.length && <button className="primary-button" type="button" onClick={() => setView({ kind: 'editor', recipe: null })}>Create first recipe</button>}</section>}
-    </main>
-    <button className="floating-add" type="button" aria-label="Create recipe" onClick={() => setView({ kind: 'editor', recipe: null })}>+</button>
-    {conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void resolveConflictKeepLocal(conflicts[0])} onKeepServer={() => void resolveConflictKeepServer(conflicts[0])} onMerge={() => setView({ kind: 'editor', recipe: conflicts[0].local_recipe, conflict: conflicts[0] })} />}
-  </div>;
+  const dialog = conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void resolveConflictKeepLocal(conflicts[0])} onKeepServer={() => void resolveConflictKeepServer(conflicts[0])} onMerge={() => navigate(`/recipes/${conflicts[0].entity_id}/edit`)} />;
+  return <><Routes>
+    <Route path="/" element={<Library recipes={recipes} catalog={catalog} tags={tags} email={email} />} />
+    <Route path="/recipes/new" element={<EditorRoute recipes={recipes} catalog={catalog} tags={tags} conflicts={conflicts} />} />
+    <Route path="/recipes/:recipeId" element={<DetailRoute recipes={recipes} onDelete={remove} />} />
+    <Route path="/recipes/:recipeId/edit" element={<EditorRoute recipes={recipes} catalog={catalog} tags={tags} conflicts={conflicts} />} />
+    <Route path="/settings" element={<SettingsView email={email} sync={sync} onBack={() => navigate('/')} onCleared={() => navigate('/')} />} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes>{dialog}</>;
 }

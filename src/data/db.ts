@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Recipe, RecipeDraft } from '../api/recipes';
+import type { IngredientCatalogEntry, Recipe, RecipeDraft } from '../api/recipes';
 
 export type LocalSyncStatus = 'synced' | 'pending' | 'conflict';
 export type OutboxStatus = 'pending' | 'syncing' | 'failed' | 'conflict';
@@ -39,6 +39,7 @@ export interface OutboxOperation {
 }
 
 export interface LocalTag { id: string; name: string; normalized_name: string; }
+export type LocalIngredientCatalog = IngredientCatalogEntry;
 
 export interface SyncMetadata {
   key: string;
@@ -61,6 +62,7 @@ class RecipeDatabase extends Dexie {
   tags!: EntityTable<LocalTag, 'id'>;
   syncMetadata!: EntityTable<SyncMetadata, 'key'>;
   conflicts!: EntityTable<RecipeConflict, 'id'>;
+  ingredientCatalog!: EntityTable<LocalIngredientCatalog, 'id'>;
 
   constructor() {
     super('recipe-app');
@@ -78,13 +80,16 @@ class RecipeDatabase extends Dexie {
       recipes: '&id, updated_at, sync_status',
       images: '&id, last_accessed_at',
     });
+    this.version(3).stores({
+      ingredientCatalog: '&id, category',
+    });
   }
 }
 
 export const db = new RecipeDatabase();
 
 export async function clearLocalData(): Promise<void> {
-  await db.transaction('rw', [db.recipes, db.images, db.outbox, db.tags, db.syncMetadata, db.conflicts], async () => {
-    await Promise.all([db.recipes.clear(), db.images.clear(), db.outbox.clear(), db.tags.clear(), db.syncMetadata.clear(), db.conflicts.clear()]);
+  await db.transaction('rw', [db.recipes, db.images, db.outbox, db.tags, db.syncMetadata, db.conflicts, db.ingredientCatalog], async () => {
+    await Promise.all([db.recipes.clear(), db.images.clear(), db.outbox.clear(), db.tags.clear(), db.syncMetadata.clear(), db.conflicts.clear(), db.ingredientCatalog.clear()]);
   });
 }

@@ -1,4 +1,5 @@
-import { ApiError, AuthenticationRequiredError, downloadImage, getChanges, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
+import { ApiError, AuthenticationRequiredError, downloadImage, getChanges, getIngredientCatalog, getTags, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
+import { normalizeSearchValue } from '../data/normalize';
 import { db, type LocalRecipe, type OutboxOperation, type RecipeConflict } from '../data/db';
 import { sanitizeRecipeDraft } from '../data/local-recipes';
 import { thumbnailFromWebp } from '../images/process';
@@ -211,6 +212,25 @@ async function pullChanges(): Promise<void> {
   }
 }
 
+async function refreshReferenceData(): Promise<void> {
+  const [catalog, tags] = await Promise.all([getIngredientCatalog(), getTags()]);
+  const pendingOperations = (await db.outbox.toArray()).filter((entry) => entry.type.startsWith('recipe-'));
+  const pendingRecipes = (await Promise.all([...new Set(pendingOperations.map((entry) => entry.entity_id))].map((id) => db.recipes.get(id))))
+    .filter((recipe): recipe is LocalRecipe => Boolean(recipe));
+  const preservedCatalogIds = new Set(pendingRecipes.flatMap((recipe) => recipe.ingredients.flatMap((item) => item.catalog_id ? [item.catalog_id] : [])));
+  const preservedCatalog = (await Promise.all([...preservedCatalogIds].map((id) => db.ingredientCatalog.get(id))))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const preservedTags = pendingRecipes.flatMap((recipe) => recipe.tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeSearchValue(tag.name) }] : []));
+  await db.transaction('rw', db.ingredientCatalog, db.tags, async () => {
+    await Promise.all([db.ingredientCatalog.clear(), db.tags.clear()]);
+    await db.ingredientCatalog.bulkPut([...new Map([...catalog, ...preservedCatalog].map((entry) => [entry.id, entry])).values()]);
+    await db.tags.bulkPut([...new Map([
+      ...tags.flatMap((tag) => tag.id ? [{ id: tag.id, name: tag.name, normalized_name: normalizeSearchValue(tag.name) }] : []),
+      ...preservedTags,
+    ].map((tag) => [tag.normalized_name, tag])).values()]);
+  });
+}
+
 async function runSync(): Promise<void> {
   await updatePendingCount();
   if (!navigator.onLine) { publish({ phase: 'offline', message: null }); return; }
@@ -218,6 +238,7 @@ async function runSync(): Promise<void> {
   try {
     await processOutbox();
     await pullChanges();
+    await refreshReferenceData();
     const lastSync = new Date().toISOString();
     await db.syncMetadata.put({ key: 'last_successful_sync', value: lastSync });
     publish({ phase: 'idle', lastSync, message: null });

@@ -1,5 +1,6 @@
 export interface Ingredient {
   id?: string;
+  catalog_id?: string | null;
   amount: string | null;
   unit: string | null;
   name: string;
@@ -13,6 +14,20 @@ export interface Instruction {
 }
 
 export interface Tag { id?: string; name: string; }
+
+export interface IngredientCatalogName {
+  locale: string;
+  display_name: string;
+  normalized_name: string;
+  preferred: boolean;
+}
+
+export interface IngredientCatalogEntry {
+  id: string;
+  category: string | null;
+  user_created: boolean;
+  names: IngredientCatalogName[];
+}
 
 export interface RecipeDraft {
   title: string;
@@ -80,6 +95,14 @@ function writeInit(method: string, body: unknown): RequestInit {
 
 export async function getRecipes(signal?: AbortSignal): Promise<Recipe[]> {
   return (await api<{ recipes: Recipe[] }>('/api/recipes', { signal })).recipes;
+}
+
+export async function getIngredientCatalog(signal?: AbortSignal): Promise<IngredientCatalogEntry[]> {
+  return (await api<{ ingredients: IngredientCatalogEntry[] }>('/api/ingredients', { signal })).ingredients;
+}
+
+export async function getTags(signal?: AbortSignal): Promise<Tag[]> {
+  return (await api<{ tags: Tag[] }>('/api/tags', { signal })).tags;
 }
 
 export async function createRecipe(draft: RecipeDraft): Promise<Recipe> {

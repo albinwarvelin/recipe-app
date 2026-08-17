@@ -1,6 +1,7 @@
 import type { RecipeDraft } from '../api/recipes';
 import type { PreparedCoverImage } from '../images/process';
-import { db, type LocalImage, type LocalRecipe, type OutboxOperation } from './db';
+import { db, type LocalImage, type LocalIngredientCatalog, type LocalRecipe, type OutboxOperation } from './db';
+import { normalizeDisplayName, normalizeSearchValue, normalizeUnit } from './normalize';
 
 export type CoverChange = { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; image: PreparedCoverImage };
 
@@ -21,6 +22,7 @@ export function sanitizeRecipeDraft(draft: RecipeDraft): RecipeDraft {
     favorite: draft.favorite,
     ingredients: draft.ingredients.map((item) => ({
       ...(item.id ? { id: item.id } : {}),
+      catalog_id: item.catalog_id ?? null,
       amount: item.amount,
       unit: item.unit,
       name: item.name,
@@ -35,14 +37,42 @@ export function sanitizeRecipeDraft(draft: RecipeDraft): RecipeDraft {
   };
 }
 
-function withStableChildren(rawDraft: RecipeDraft): RecipeDraft {
+async function withStableChildren(rawDraft: RecipeDraft): Promise<{ draft: RecipeDraft; newCatalogEntries: LocalIngredientCatalog[] }> {
   const draft = sanitizeRecipeDraft(rawDraft);
-  return {
+  const catalog = await db.ingredientCatalog.toArray();
+  const tags = await db.tags.toArray();
+  const catalogByName = new Map(catalog.flatMap((entry) => entry.names.map((name) => [name.normalized_name, entry] as const)));
+  const tagsByName = new Map(tags.map((tag) => [tag.normalized_name, tag] as const));
+  const newCatalogEntries: LocalIngredientCatalog[] = [];
+  const normalizedTags = new Map<string, RecipeDraft['tags'][number]>();
+  for (const tag of draft.tags) {
+    const name = normalizeDisplayName(tag.name);
+    const normalized = normalizeSearchValue(name);
+    if (!normalized || normalizedTags.has(normalized)) continue;
+    const known = tagsByName.get(normalized);
+    normalizedTags.set(normalized, { id: known?.id ?? tag.id ?? crypto.randomUUID(), name: known?.name ?? name });
+  }
+  const prepared: RecipeDraft = {
     ...draft,
-    ingredients: draft.ingredients.map((item) => ({ ...item, id: item.id ?? crypto.randomUUID() })),
+    ingredients: draft.ingredients.map((item) => {
+      const name = normalizeDisplayName(item.name);
+      const normalized = normalizeSearchValue(name);
+      const known = item.catalog_id ? catalog.find((entry) => entry.id === item.catalog_id) : catalogByName.get(normalized);
+      const catalogId = known?.id ?? item.catalog_id ?? crypto.randomUUID();
+      if (!known && !newCatalogEntries.some((entry) => entry.id === catalogId)) {
+        newCatalogEntries.push({
+          id: catalogId,
+          category: null,
+          user_created: true,
+          names: [{ locale: 'und', display_name: name, normalized_name: normalized, preferred: true }],
+        });
+      }
+      return { ...item, id: item.id ?? crypto.randomUUID(), catalog_id: catalogId, name, unit: normalizeUnit(item.unit) };
+    }),
     instructions: draft.instructions.map((item) => ({ ...item, id: item.id ?? crypto.randomUUID() })),
-    tags: draft.tags.map((item) => ({ ...item, id: item.id ?? crypto.randomUUID() })),
+    tags: [...normalizedTags.values()],
   };
+  return { draft: prepared, newCatalogEntries };
 }
 
 export function draftFromLocalRecipe(recipe: LocalRecipe): RecipeDraft {
@@ -85,7 +115,7 @@ async function pendingRecipeOperation(recipeId: string): Promise<OutboxOperation
 export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: RecipeDraft, cover: CoverChange): Promise<LocalRecipe> {
   const timestamp = now();
   const recipeId = existing?.id ?? crypto.randomUUID();
-  const draft = withStableChildren(rawDraft);
+  const { draft, newCatalogEntries } = await withStableChildren(rawDraft);
   const priorImageId = existing?.image_key ?? null;
   const imageId = cover.kind === 'replace' ? cover.image.id : cover.kind === 'remove' ? null : priorImageId;
   draft.image_key = imageId;
@@ -101,7 +131,8 @@ export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: Re
     deleted_at: null,
   };
 
-  await db.transaction('rw', db.recipes, db.images, db.outbox, db.tags, async () => {
+  await db.transaction('rw', db.recipes, db.images, db.outbox, db.tags, db.ingredientCatalog, async () => {
+    if (newCatalogEntries.length) await db.ingredientCatalog.bulkPut(newCatalogEntries);
     let uploadOperation: OutboxOperation | undefined;
     if (cover.kind === 'replace') {
       await db.images.put(imageRecord(cover.image, timestamp));

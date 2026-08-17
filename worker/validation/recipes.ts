@@ -5,6 +5,7 @@ const nullableNonNegativeInteger = z.number().int().min(0).max(10_000).nullable(
 
 export const ingredientSchema = z.object({
   id: z.string().uuid().optional(),
+  catalog_id: z.string().uuid().nullable().optional(),
   amount: z.string().trim().max(80).nullable().optional(),
   unit: z.string().trim().max(80).nullable().optional(),
   name: z.string().trim().min(1).max(300),

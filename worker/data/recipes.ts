@@ -1,4 +1,5 @@
 import { findProcessedOperation, processedOperationStatement, requestFingerprint } from '../idempotency';
+import { normalizeDisplayName, normalizeSearchValue, normalizeUnit } from '../normalization';
 import type { IngredientInput, InstructionInput, RecipeInput, RecipePatch, RecipePut, TagInput } from '../validation/recipes';
 
 interface RecipeRow {
@@ -24,6 +25,7 @@ interface IngredientRow {
   id: string;
   recipe_id: string;
   position: number;
+  catalog_id: string | null;
   amount: string | null;
   unit: string | null;
   name: string;
@@ -41,6 +43,21 @@ interface InstructionRow {
 export interface Tag {
   id: string;
   name: string;
+}
+
+interface IngredientCatalogNameRow {
+  ingredient_id: string;
+  locale: string;
+  display_name: string;
+  normalized_name: string;
+  preferred: number;
+}
+
+export interface IngredientCatalogEntry {
+  id: string;
+  category: string | null;
+  user_created: boolean;
+  names: Array<Omit<IngredientCatalogNameRow, 'ingredient_id' | 'preferred'> & { preferred: boolean }>;
 }
 
 interface TagRow extends Tag {
@@ -141,22 +158,66 @@ export async function listTags(db: D1Database): Promise<Tag[]> {
   return result.results;
 }
 
+export async function listIngredientCatalog(db: D1Database): Promise<IngredientCatalogEntry[]> {
+  const [entries, names] = await Promise.all([
+    db.prepare('SELECT id, category, user_created FROM ingredient_catalog ORDER BY id').all<{ id: string; category: string | null; user_created: number }>(),
+    db.prepare("SELECT ingredient_id, locale, display_name, normalized_name, preferred FROM ingredient_catalog_names ORDER BY ingredient_id, CASE locale WHEN 'sv' THEN 0 WHEN 'en' THEN 1 ELSE 2 END, display_name").all<IngredientCatalogNameRow>(),
+  ]);
+  const namesById = new Map<string, IngredientCatalogEntry['names']>();
+  for (const { ingredient_id, preferred, ...name } of names.results) {
+    const list = namesById.get(ingredient_id) ?? [];
+    list.push({ ...name, preferred: preferred === 1 });
+    namesById.set(ingredient_id, list);
+  }
+  return entries.results.map((entry) => ({ ...entry, user_created: entry.user_created === 1, names: namesById.get(entry.id) ?? [] }));
+}
+
 async function resolveTags(db: D1Database, inputs: TagInput[], now: string): Promise<Array<Tag & { normalizedName: string; created: boolean }>> {
   if (inputs.length === 0) return [];
-  const normalizedNames = inputs.map((tag) => tag.name.toLowerCase());
+  const displayNames = inputs.map((tag) => normalizeDisplayName(tag.name));
+  const normalizedNames = displayNames.map(normalizeSearchValue);
   const existing = await Promise.all(normalizedNames.map((name) => db.prepare('SELECT id, name FROM tags WHERE normalized_name = ?1').bind(name).first<Tag>()));
   return inputs.map((tag, index) => {
     const row = existing[index];
     return {
       id: row?.id ?? tag.id ?? crypto.randomUUID(),
-      name: row?.name ?? tag.name,
+      name: row?.name ?? displayNames[index],
       normalizedName: normalizedNames[index],
       created: !row,
     };
   });
 }
 
-function normalizedRecipe(input: RecipeInput, now: string): Recipe {
+interface CatalogRegistration { id: string; name: string; normalizedName: string; }
+type ResolvedIngredient = Omit<IngredientRow, 'recipe_id' | 'position'>;
+
+async function resolveIngredients(db: D1Database, inputs: IngredientInput[]): Promise<{ ingredients: ResolvedIngredient[]; registrations: CatalogRegistration[] }> {
+  const registrations: CatalogRegistration[] = [];
+  const createdByName = new Map<string, string>();
+  const ingredients: ResolvedIngredient[] = [];
+  for (const input of inputs) {
+    const name = normalizeDisplayName(input.name);
+    const normalizedName = normalizeSearchValue(name);
+    const selected = input.catalog_id
+      ? await db.prepare('SELECT id FROM ingredient_catalog WHERE id = ?1').bind(input.catalog_id).first<{ id: string }>()
+      : null;
+    const matched = selected ?? await db.prepare('SELECT ingredient_id AS id FROM ingredient_catalog_names WHERE normalized_name = ?1 LIMIT 1').bind(normalizedName).first<{ id: string }>();
+    let catalogId = matched?.id ?? createdByName.get(normalizedName);
+    if (!catalogId) {
+      catalogId = input.catalog_id ?? crypto.randomUUID();
+      createdByName.set(normalizedName, catalogId);
+      registrations.push({ id: catalogId, name, normalizedName });
+    }
+    ingredients.push({
+      id: input.id ?? crypto.randomUUID(), catalog_id: catalogId,
+      amount: input.amount ?? null, unit: normalizeUnit(input.unit), name,
+      group_name: input.group_name ?? null,
+    });
+  }
+  return { ingredients, registrations };
+}
+
+function normalizedRecipe(input: RecipeInput, now: string, ingredients: ResolvedIngredient[]): Recipe {
   return {
     id: input.id ?? crypto.randomUUID(),
     title: input.title,
@@ -174,10 +235,7 @@ function normalizedRecipe(input: RecipeInput, now: string): Recipe {
     created_at: now,
     updated_at: now,
     deleted_at: null,
-    ingredients: input.ingredients.map((entry) => ({
-      id: entry.id ?? crypto.randomUUID(), amount: entry.amount ?? null, unit: entry.unit ?? null,
-      name: entry.name, group_name: entry.group_name ?? null,
-    })),
+    ingredients,
     instructions: input.instructions.map((entry) => ({
       id: entry.id ?? crypto.randomUUID(), text: entry.text, timer_seconds: entry.timer_seconds ?? null,
     })),
@@ -185,11 +243,19 @@ function normalizedRecipe(input: RecipeInput, now: string): Recipe {
   };
 }
 
-function recipeStatements(db: D1Database, recipe: Recipe, resolvedTags: Awaited<ReturnType<typeof resolveTags>>): D1PreparedStatement[] {
+function recipeStatements(db: D1Database, recipe: Recipe, resolvedTags: Awaited<ReturnType<typeof resolveTags>>, registrations: CatalogRegistration[]): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
+  registrations.forEach((entry) => {
+    statements.push(db.prepare(
+      'INSERT OR IGNORE INTO ingredient_catalog (id, category, user_created, created_at, updated_at) VALUES (?1, NULL, 1, ?2, ?2)'
+    ).bind(entry.id, recipe.updated_at));
+    statements.push(db.prepare(
+      "INSERT OR IGNORE INTO ingredient_catalog_names (ingredient_id, locale, display_name, normalized_name, preferred) VALUES (?1, 'und', ?2, ?3, 1)"
+    ).bind(entry.id, entry.name, entry.normalizedName));
+  });
   recipe.ingredients.forEach((ingredient, position) => statements.push(db.prepare(
-    'INSERT INTO ingredients (id, recipe_id, position, amount, unit, name, group_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)'
-  ).bind(ingredient.id, recipe.id, position, ingredient.amount, ingredient.unit, ingredient.name, ingredient.group_name)));
+    'INSERT INTO ingredients (id, recipe_id, position, amount, unit, name, group_name, catalog_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)'
+  ).bind(ingredient.id, recipe.id, position, ingredient.amount, ingredient.unit, ingredient.name, ingredient.group_name, ingredient.catalog_id)));
   recipe.instructions.forEach((instruction, position) => statements.push(db.prepare(
     'INSERT INTO instructions (id, recipe_id, position, text, timer_seconds) VALUES (?1, ?2, ?3, ?4, ?5)'
   ).bind(instruction.id, recipe.id, position, instruction.text, instruction.timer_seconds)));
@@ -218,14 +284,15 @@ export async function createRecipe(db: D1Database, input: RecipeInput, context: 
   const replay = await replayOrReuse(db, context, fingerprint);
   if (replay) return replay;
   const now = new Date().toISOString();
-  const recipe = normalizedRecipe(input, now);
+  const resolvedIngredients = await resolveIngredients(db, input.ingredients);
+  const recipe = normalizedRecipe(input, now, resolvedIngredients.ingredients);
   const resolvedTags = await resolveTags(db, input.tags, now);
   recipe.tags = resolvedTags.map(({ id, name }) => ({ id, name }));
   const body = { recipe };
   const statements: D1PreparedStatement[] = [db.prepare(
     'INSERT INTO recipes (id, title, description, servings, prep_minutes, cook_minutes, source_type, source_name, source_url, image_key, notes, favorite, version, created_at, updated_at, deleted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)'
   ).bind(recipe.id, recipe.title, recipe.description, recipe.servings, recipe.prep_minutes, recipe.cook_minutes, recipe.source_type, recipe.source_name, recipe.source_url, recipe.image_key, recipe.notes, recipe.favorite ? 1 : 0, recipe.version, recipe.created_at, recipe.updated_at, recipe.deleted_at)];
-  statements.push(...recipeStatements(db, recipe, resolvedTags));
+  statements.push(...recipeStatements(db, recipe, resolvedTags, resolvedIngredients.registrations));
   statements.push(db.prepare('INSERT INTO recipe_changes (recipe_id, recipe_version, changed_at, deleted) VALUES (?1, ?2, ?3, 0)').bind(recipe.id, recipe.version, now));
   statements.push(processedOperationStatement(db, context.operationId, context.method, context.path, fingerprint, 201, body, now));
   try {
@@ -238,8 +305,8 @@ export async function createRecipe(db: D1Database, input: RecipeInput, context: 
   return { kind: 'success', status: 201, body, replayed: false };
 }
 
-function mergeRecipe(current: Recipe, input: RecipePatch | RecipePut, now: string): Recipe {
-  const { base_version: _baseVersion, ingredients, instructions, tags, ...scalars } = input;
+function mergeRecipe(current: Recipe, input: RecipePatch | RecipePut, now: string, resolvedIngredients: ResolvedIngredient[] | undefined): Recipe {
+  const { base_version: _baseVersion, ingredients: _ingredientInputs, instructions, tags, ...scalars } = input;
   return {
     ...current,
     ...scalars,
@@ -251,10 +318,7 @@ function mergeRecipe(current: Recipe, input: RecipePatch | RecipePut, now: strin
     image_key: scalars.image_key === undefined ? current.image_key : scalars.image_key ?? null,
     version: current.version + 1,
     updated_at: now,
-    ingredients: ingredients?.map((entry: IngredientInput) => ({
-      id: entry.id ?? crypto.randomUUID(), amount: entry.amount ?? null, unit: entry.unit ?? null,
-      name: entry.name, group_name: entry.group_name ?? null,
-    })) ?? current.ingredients,
+    ingredients: resolvedIngredients ?? current.ingredients,
     instructions: instructions?.map((entry: InstructionInput) => ({
       id: entry.id ?? crypto.randomUUID(), text: entry.text, timer_seconds: entry.timer_seconds ?? null,
     })) ?? current.instructions,
@@ -270,7 +334,8 @@ export async function updateRecipe(db: D1Database, recipeId: string, input: Reci
   if (!current) return { kind: 'not_found' };
   if (current.version !== input.base_version) return { kind: 'conflict', current };
   const now = new Date().toISOString();
-  const recipe = mergeRecipe(current, input, now);
+  const resolvedIngredients = input.ingredients ? await resolveIngredients(db, input.ingredients) : undefined;
+  const recipe = mergeRecipe(current, input, now, resolvedIngredients?.ingredients);
   const resolvedTags = await resolveTags(db, recipe.tags, now);
   recipe.tags = resolvedTags.map(({ id, name }) => ({ id, name }));
   const body = { recipe };
@@ -280,7 +345,7 @@ export async function updateRecipe(db: D1Database, recipeId: string, input: Reci
     db.prepare('DELETE FROM ingredients WHERE recipe_id = ?1').bind(recipeId),
     db.prepare('DELETE FROM instructions WHERE recipe_id = ?1').bind(recipeId),
     db.prepare('DELETE FROM recipe_tags WHERE recipe_id = ?1').bind(recipeId),
-    ...recipeStatements(db, recipe, resolvedTags),
+    ...recipeStatements(db, recipe, resolvedTags, resolvedIngredients?.registrations ?? []),
     db.prepare('INSERT INTO recipe_changes (recipe_id, recipe_version, changed_at, deleted) VALUES (?1, ?2, ?3, 0)').bind(recipeId, recipe.version, now),
     processedOperationStatement(db, context.operationId, context.method, context.path, fingerprint, 200, body, now),
     db.prepare('DELETE FROM mutation_guards WHERE operation_id = ?1').bind(context.operationId),

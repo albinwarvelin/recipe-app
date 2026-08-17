@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import { createRecipe, deleteRecipe, getRecipe, recipeChanges, updateRecipe } from '../../worker/data/recipes';
+import { createRecipe, deleteRecipe, getRecipe, listIngredientCatalog, recipeChanges, updateRecipe } from '../../worker/data/recipes';
 import { recipeInputSchema, recipePatchSchema } from '../../worker/validation/recipes';
 
 describe('recipe aggregate persistence', () => {
@@ -9,7 +9,7 @@ describe('recipe aggregate persistence', () => {
       title: 'Cloudflare cake',
       description: 'A complete aggregate',
       servings: 4,
-      ingredients: [{ amount: '2', unit: 'cups', name: 'Flour' }],
+      ingredients: [{ amount: '2', unit: 'deciliter', name: 'hemligt pulver' }],
       instructions: [{ text: 'Mix everything.', timer_seconds: 60 }],
       tags: [{ name: 'Dessert' }],
     });
@@ -25,10 +25,12 @@ describe('recipe aggregate persistence', () => {
     const stored = await getRecipe(env.DB, createdRecipe.id);
     expect(stored).toMatchObject({
       title: 'Cloudflare cake', version: 1,
-      ingredients: [{ amount: '2', unit: 'cups', name: 'Flour' }],
+      ingredients: [{ amount: '2', unit: 'dl', name: 'Hemligt pulver', catalog_id: expect.any(String) }],
       instructions: [{ text: 'Mix everything.', timer_seconds: 60 }],
       tags: [{ name: 'Dessert' }],
     });
+    expect(await env.DB.prepare("SELECT locale, display_name FROM ingredient_catalog_names WHERE locale = 'und' AND normalized_name = 'hemligt pulver'").first())
+      .toEqual({ locale: 'und', display_name: 'Hemligt pulver' });
 
     const patch = recipePatchSchema.parse({ base_version: 1, favorite: true, tags: [{ name: 'dessert' }, { name: 'Tested' }] });
     const updated = await updateRecipe(env.DB, createdRecipe.id, patch, { operationId: crypto.randomUUID(), method: 'PATCH', path: `/api/recipes/${createdRecipe.id}`, body: patch });
@@ -46,5 +48,11 @@ describe('recipe aggregate persistence', () => {
     expect(deleted).toMatchObject({ kind: 'success', status: 200 });
     expect(await getRecipe(env.DB, createdRecipe.id)).toBeNull();
     expect(await getRecipe(env.DB, createdRecipe.id, true)).toMatchObject({ version: 3, deleted_at: expect.any(String) });
+  });
+
+  it('serves bilingual catalogue entries', async () => {
+    const catalog = await listIngredientCatalog(env.DB);
+    expect(catalog.some((entry) => entry.names.some((name) => name.locale === 'sv' && name.display_name === 'Lax'))).toBe(true);
+    expect(catalog.some((entry) => entry.names.some((name) => name.locale === 'en' && name.display_name === 'Salmon'))).toBe(true);
   });
 });

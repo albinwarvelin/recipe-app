@@ -2,6 +2,7 @@ import { listTags, type Tag } from '../data/recipes';
 import { findProcessedOperation, processedOperationStatement, requestFingerprint } from '../idempotency';
 import { error, json, readJson } from '../http';
 import { tagCreateSchema } from '../validation/recipes';
+import { normalizeDisplayName, normalizeSearchValue } from '../normalization';
 
 export async function tagRoute(request: Request, env: Env, id: string): Promise<Response> {
   if (request.method === 'GET') return json({ tags: await listTags(env.DB) }, 200, id);
@@ -26,9 +27,10 @@ export async function tagRoute(request: Request, env: Env, id: string): Promise<
     response.headers.set('Idempotency-Replayed', 'true');
     return response;
   }
-  const normalizedName = parsed.data.name.toLowerCase();
+  const displayName = normalizeDisplayName(parsed.data.name);
+  const normalizedName = normalizeSearchValue(displayName);
   const existing = await env.DB.prepare('SELECT id, name FROM tags WHERE normalized_name = ?1').bind(normalizedName).first<Tag>();
-  const tag = existing ?? { id: crypto.randomUUID(), name: parsed.data.name };
+  const tag = existing ?? { id: crypto.randomUUID(), name: displayName };
   const status = existing ? 200 : 201;
   const responseBody = { tag };
   const now = new Date().toISOString();
