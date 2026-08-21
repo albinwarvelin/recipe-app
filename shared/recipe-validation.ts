@@ -23,6 +23,9 @@ export const recipeLimits = {
 
 const nullableShortText = z.string().trim().max(recipeLimits.sourceName).nullable().optional();
 const nullableNonNegativeInteger = z.number().int().min(0).max(recipeLimits.minutes).nullable().optional();
+const nullableWebUrl = z.string().url().max(recipeLimits.sourceUrl)
+  .refine((value) => ['http:', 'https:'].includes(new URL(value).protocol), 'Only http and https source URLs are accepted.')
+  .nullable().optional();
 
 export const ingredientSchema = z.object({
   id: z.string().uuid().optional(),
@@ -61,7 +64,7 @@ export const scalarRecipeSchema = z.object({
   cook_minutes: nullableNonNegativeInteger,
   source_type: z.enum(['personal', 'online', 'ai']).default('personal'),
   source_name: nullableShortText,
-  source_url: z.string().url().max(recipeLimits.sourceUrl).nullable().optional(),
+  source_url: nullableWebUrl,
   image_key: z.string().uuid().nullable().optional(),
   notes: z.string().trim().max(recipeLimits.notes).default(''),
   favorite: z.boolean().default(false),

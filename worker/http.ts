@@ -18,9 +18,9 @@ export function error(code: string, message: string, status: ErrorStatus, id: st
   return json({ error: { code, message, requestId: id, ...(details === undefined ? {} : { details }) } }, status, id);
 }
 
-export async function readBoundedBody(request: Request, maxBytes: number): Promise<ArrayBuffer | null> {
-  if (!request.body) return new ArrayBuffer(0);
-  const reader = request.body.getReader();
+export async function readBoundedStream(body: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<ArrayBuffer | null> {
+  if (!body) return new ArrayBuffer(0);
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   while (true) {
@@ -40,6 +40,10 @@ export async function readBoundedBody(request: Request, maxBytes: number): Promi
     offset += chunk.byteLength;
   }
   return result.buffer;
+}
+
+export function readBoundedBody(request: Request, maxBytes: number): Promise<ArrayBuffer | null> {
+  return readBoundedStream(request.body, maxBytes);
 }
 
 export async function readJson(request: Request, id: string, maxBytes: number): Promise<unknown | Response> {

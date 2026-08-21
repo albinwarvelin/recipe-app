@@ -3,6 +3,7 @@ import { error, json, requestId } from './http';
 import { allowedOrigin, applySecurityHeaders } from './middleware/security';
 import { recipeRoute } from './routes/recipes';
 import { imageRoute } from './routes/images';
+import { importImageRoute } from './routes/import-image';
 import { syncRoute } from './routes/sync';
 import { tagRoute } from './routes/tags';
 import { ingredientRoute } from './routes/ingredients';
@@ -49,6 +50,15 @@ async function handleRequest(request: Request, env: Env, id: string): Promise<Re
     response = await tagRoute(request, env, id);
   } else if (url.pathname === '/api/ingredients') {
     response = await ingredientRoute(request, env, id);
+  } else if (url.pathname === '/api/import/image') {
+    if (request.method !== 'POST') {
+      response = await importImageRoute(request, env, id);
+    } else {
+      const rateLimit = await env.IMPORT_RATE_LIMITER.limit({ key: identity.email });
+      response = rateLimit.success
+        ? await importImageRoute(request, env, id)
+        : error('RATE_LIMITED', 'Too many image import attempts. Try again later.', 429, id);
+    }
   } else if (url.pathname.startsWith('/api/images/')) {
     response = await imageRoute(request, env, id);
   } else if (url.pathname === '/api/sync' || url.pathname === '/api/sync/changes') {

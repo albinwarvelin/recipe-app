@@ -3,7 +3,7 @@
 	"name": "recipe-app-api",
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-08-02",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 	"workers_dev": true,
 	"preview_urls": true,
 	"assets": {
@@ -39,6 +39,13 @@
 			"bucket_name": "recipe-app-images",
 			"jurisdiction": "eu",
 			"remote": false
+		}
+	],
+	"ratelimits": [
+		{
+			"name": "IMPORT_RATE_LIMITER",
+			"namespace_id": "83047",
+			"simple": { "limit": 10, "period": 60 }
 		}
 	]
 }

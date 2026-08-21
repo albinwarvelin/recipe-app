@@ -191,6 +191,33 @@ export async function downloadImage(imageId: string): Promise<Blob> {
   return response.blob();
 }
 
+export async function downloadImportedImage(url: string): Promise<Blob> {
+  const response = await fetch('/api/import/image', {
+    method: 'POST',
+    credentials: 'same-origin',
+    redirect: 'manual',
+    headers: {
+      Accept: 'image/jpeg,image/png,image/webp,image/heic,image/heif',
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'RecipeApp',
+    },
+    body: JSON.stringify({ url }),
+  });
+  if ((response.type as string) === 'opaqueredirect' || response.status === 0 || response.status === 302 || response.status === 401 || response.status === 403) {
+    throw new AuthenticationRequiredError();
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as ApiErrorBody;
+    const detail = body.error;
+    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId, undefined, detail?.code);
+  }
+  const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() ?? '';
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(contentType)) {
+    throw new ApiError(415, 'Bildformatet stöds inte.');
+  }
+  return response.blob();
+}
+
 export async function removeImage(imageId: string, operationId: string): Promise<void> {
   await api(`/api/images/${imageId}`, {
     method: 'DELETE',

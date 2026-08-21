@@ -4,6 +4,7 @@ import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
 import { ConflictResolution } from '../components/ConflictResolution';
 import { ingredientLabel } from '../components/IngredientCombobox';
+import { JsonImport } from '../components/JsonImport';
 import { CheckIcon, ChevronDownIcon, CloseIcon, MoreIcon, PlusIcon, SearchIcon, StarIcon } from '../components/Icons';
 import { RecipeCard } from '../components/RecipeCard';
 import { RecipeDetail } from '../components/RecipeDetail';
@@ -18,7 +19,7 @@ import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServe
 
 type MatchMode = 'any' | 'all';
 type SortMode = 'updated' | 'title' | 'time';
-type OpenPopover = 'app' | 'ingredients' | 'tags' | 'time' | 'sort' | null;
+type OpenPopover = 'app' | 'create' | 'ingredients' | 'tags' | 'time' | 'sort' | null;
 
 function setValues(params: URLSearchParams, key: string, values: string[]): URLSearchParams {
   const next = new URLSearchParams(params);
@@ -155,7 +156,10 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
       </section>
       {recipesStatus === 'loading' ? <section className="empty-state" role="status"><h2 className="heading-2">Läser lokala recept…</h2><p className="text-body-muted">Ditt offlinebibliotek öppnas på den här enheten.</p></section> : filtered.length ? <section className="recipe-grid" aria-label="Receptbibliotek">{filtered.map((recipe) => <RecipeCard key={recipe.id} recipe={recipe} to={`/recipes/${recipe.id}`} onFavorite={() => { void setLocalFavorite(recipe, !recipe.favorite).then(() => syncNow()); }} />)}</section> : <section className="empty-state"><div className="empty-state-icon" aria-hidden="true">✦</div><h2 className="heading-2">{recipes.length ? 'Inga recept matchar.' : 'Ditt kök börjar här.'}</h2><p className="text-body-muted">{recipes.length ? 'Prova en annan sökning eller ta bort ett filter.' : 'Lägg till ett recept med omslagsbild så finns det kvar även offline.'}</p>{!recipes.length && <Link className="primary-button" to="/recipes/new">Skapa första receptet</Link>}</section>}
     </main>
-    <Link className="floating-add" to="/recipes/new" aria-label="Skapa recept"><PlusIcon size={28} /></Link>
+    <div className="floating-create menu-wrap" data-popover-root>
+      {openPopover === 'create' && <div className="app-menu create-menu"><Link to="/recipes/new" onClick={() => setOpenPopover(null)}>Skapa manuellt</Link><Link to="/recipes/import" onClick={() => setOpenPopover(null)}>Importera JSON</Link></div>}
+      <button className="floating-add" type="button" aria-label="Lägg till recept" aria-expanded={openPopover === 'create'} onClick={() => togglePopover('create')}><PlusIcon size={28} /></button>
+    </div>
   </div>;
 }
 
@@ -182,6 +186,16 @@ function EditorRoute({ recipesState, catalog, tags, conflictsState }: { recipesS
     void syncNow();
   }
   return <RecipeEditor recipe={recipe} catalog={catalog} tags={tags} onCancel={() => navigate(recipe ? `/recipes/${recipe.id}` : '/')} onSave={save} />;
+}
+
+function ImportRoute({ catalog, tags }: { catalog: LocalIngredientCatalog[]; tags: LocalTag[] }) {
+  const navigate = useNavigate();
+  async function save(draft: RecipeDraft, cover: CoverChange) {
+    const saved = await saveLocalRecipe(null, draft, cover);
+    navigate(`/recipes/${saved.id}`, { replace: true });
+    void syncNow();
+  }
+  return <JsonImport catalog={catalog} tags={tags} onCancel={() => navigate('/')} onSave={save} />;
 }
 
 function ConflictRoute({ conflictsState, catalog, tags }: { conflictsState: LocalQueryState<RecipeConflict[]>; catalog: LocalIngredientCatalog[]; tags: LocalTag[] }) {
@@ -230,6 +244,7 @@ export function HomePage({ email }: { email?: string }) {
   return <><Routes>
     <Route path="/" element={<Library recipes={recipes} recipesStatus={recipesState.status} catalog={catalog} tags={tags} email={email} />} />
     <Route path="/recipes/new" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
+    <Route path="/recipes/import" element={<ImportRoute catalog={catalog} tags={tags} />} />
     <Route path="/recipes/:recipeId" element={<DetailRoute recipesState={recipesState} onDelete={remove} />} />
     <Route path="/recipes/:recipeId/edit" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
     <Route path="/recipes/:recipeId/conflict" element={<ConflictRoute conflictsState={conflictsState} catalog={catalog} tags={tags} />} />

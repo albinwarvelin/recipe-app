@@ -5,6 +5,7 @@ const env = {
   ASSETS: {} as Fetcher,
   DB: {} as D1Database,
   IMAGES: {} as R2Bucket,
+  IMPORT_RATE_LIMITER: {} as RateLimit,
   ACCESS_TEAM_DOMAIN: 'https://team.example.com',
   ACCESS_PRODUCTION_AUDIENCE: 'production-audience',
   ACCESS_PREVIEW_AUDIENCE: 'preview-audience',

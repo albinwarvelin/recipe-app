@@ -19,9 +19,11 @@ export const emptyRecipeDraft: RecipeDraft = {
 
 function optionalNumber(value: string): number | null { return value === '' ? null : Number(value); }
 
-export function RecipeEditor({ recipe, initialDraft, title, catalog, tags, allowCoverChanges = true, onCancel, onSave }: {
+export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessage, title, catalog, tags, allowCoverChanges = true, onCancel, onSave }: {
   recipe: LocalRecipe | null;
   initialDraft?: RecipeDraft;
+  initialCover?: CoverChange;
+  initialMessage?: string | null;
   title?: string;
   catalog: LocalIngredientCatalog[];
   tags: LocalTag[];
@@ -30,12 +32,12 @@ export function RecipeEditor({ recipe, initialDraft, title, catalog, tags, allow
   onSave: (draft: RecipeDraft, cover: CoverChange) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<RecipeDraft>(() => initialDraft ? structuredClone(initialDraft) : recipe ? draftFromLocalRecipe(recipe) : structuredClone(emptyRecipeDraft));
-  const [cover, setCover] = useState<CoverChange>({ kind: 'keep' });
-  const [preview, setPreview] = useState<string | null>(null);
+  const [cover, setCover] = useState<CoverChange>(initialCover ?? { kind: 'keep' });
+  const [preview, setPreview] = useState<string | null>(() => initialCover?.kind === 'replace' ? URL.createObjectURL(initialCover.image.thumbnail) : null);
   const existingImage = useImageUrl(draft.image_key);
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(initialMessage ?? null);
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => {
@@ -123,6 +125,20 @@ export function RecipeEditor({ recipe, initialDraft, title, catalog, tags, allow
             <label className="form-field"><span className="field-label">Tillagning</span><span className="input-with-suffix"><input inputMode="numeric" type="number" min="0" max={recipeLimits.minutes} value={draft.cook_minutes ?? ''} onChange={(event) => setDraft({ ...draft, cook_minutes: optionalNumber(event.target.value) })} /><span>min</span></span></label>
           </div>
           <div className="form-field"><span className="field-label">Taggar</span><TagPicker value={draft.tags} suggestions={tags} onChange={(next) => setDraft({ ...draft, tags: next })} /></div>
+        </section>
+
+        <section className="form-card editor-section">
+          <div className="form-section-heading"><div><h2 className="heading-2">Källa</h2><p className="text-body-small">Spara originalets webbplats eller vilken AI-tjänst som skapade receptet.</p></div></div>
+          <label className="form-field"><span className="field-label">Typ av källa</span><select value={draft.source_type} onChange={(event) => {
+            const sourceType = event.target.value as RecipeDraft['source_type'];
+            setDraft({
+              ...draft,
+              source_type: sourceType,
+              ...(sourceType === 'personal' ? { source_name: null, source_url: null } : sourceType === 'ai' ? { source_url: null } : {}),
+            });
+          }}><option value="personal">Eget recept</option><option value="online">Webbsida</option><option value="ai">AI</option></select></label>
+          {draft.source_type !== 'personal' && <label className="form-field"><span className="field-label">{draft.source_type === 'online' ? 'Webbplats' : 'AI-tjänst'}</span><input maxLength={recipeLimits.sourceName} value={draft.source_name ?? ''} onChange={(event) => setDraft({ ...draft, source_name: event.target.value || null })} placeholder={draft.source_type === 'online' ? 'Till exempel ICA Köket' : 'Till exempel ChatGPT'} /></label>}
+          {draft.source_type === 'online' && <label className="form-field"><span className="field-label">Originalets URL</span><input required type="url" maxLength={recipeLimits.sourceUrl} value={draft.source_url ?? ''} onChange={(event) => setDraft({ ...draft, source_url: event.target.value || null })} placeholder="https://example.com/recept" /></label>}
         </section>
 
         <section className="form-card editor-section">
