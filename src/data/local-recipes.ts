@@ -83,7 +83,7 @@ export function draftFromLocalRecipe(recipe: LocalRecipe): RecipeDraft {
 async function refreshTags(): Promise<void> {
   const recipes = await db.recipes.toArray();
   const tags = new Map<string, { id: string; name: string; normalized_name: string }>();
-  for (const recipe of recipes) for (const tag of recipe.tags) {
+  for (const recipe of recipes) if (!recipe.deleted_at) for (const tag of recipe.tags) {
     const normalized_name = normalizeIdentityValue(tag.name);
     tags.set(normalized_name, { id: tag.id ?? crypto.randomUUID(), name: tag.name, normalized_name });
   }

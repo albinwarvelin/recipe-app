@@ -154,7 +154,9 @@ export async function getRecipe(db: D1Database, recipeId: string, includeDeleted
 }
 
 export async function listTags(db: D1Database): Promise<Tag[]> {
-  const result = await db.prepare('SELECT id, name FROM tags ORDER BY normalized_name').all<Tag>();
+  const result = await db.prepare(
+    'SELECT DISTINCT t.id, t.name FROM tags t JOIN recipe_tags rt ON rt.tag_id = t.id JOIN recipes r ON r.id = rt.recipe_id WHERE r.deleted_at IS NULL ORDER BY t.normalized_name'
+  ).all<Tag>();
   return result.results;
 }
 

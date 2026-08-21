@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { downloadImportedImage, type RecipeDraft } from '../api/recipes';
+import type { RecipeDraft } from '../api/recipes';
 import type { LocalIngredientCatalog, LocalTag } from '../data/db';
 import type { CoverChange } from '../data/local-recipes';
-import { prepareCoverImage } from '../images/process';
+import { prepareImportedCoverImage } from '../images/import';
 import {
   MAX_RECIPE_IMPORT_CHARACTERS,
   parseRecipeImport,
@@ -49,9 +49,7 @@ export function JsonImport({ catalog, tags, onCancel, onSave }: {
       let notice: string | null = null;
       if (imported.imageUrl) {
         try {
-          const blob = await downloadImportedImage(imported.imageUrl);
-          const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : blob.type === 'image/heic' ? 'heic' : blob.type === 'image/heif' ? 'heif' : 'jpg';
-          cover = { kind: 'replace', image: await prepareCoverImage(new File([blob], `imported-cover.${extension}`, { type: blob.type })) };
+          cover = { kind: 'replace', image: await prepareImportedCoverImage(imported.imageUrl) };
         } catch {
           notice = 'Omslagsbilden från image_url kunde inte hämtas eller läsas. Receptet importerades utan bild; du kan välja en bild manuellt.';
         }

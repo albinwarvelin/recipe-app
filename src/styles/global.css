@@ -190,6 +190,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .cover-processing { padding: .5rem .75rem; border-radius: 999px; background: rgba(16,24,40,.75); color: #fff; font-size: .78rem; }
 .cover-actions { display: flex; align-items: center; gap: .8rem; margin-top: .75rem; }
 .cover-card .cover-actions { padding-inline: 1.15rem; }
+.cover-url-import { display: grid; gap: .45rem; padding: .9rem 1.15rem 0; }
+.input-action-row { display: flex; align-items: stretch; gap: .5rem; }
+.cover-url-import input { width: 100%; min-width: 0; min-height: 44px; flex: 1; padding: .65rem .7rem; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: #fff; color: var(--ink); }
+.cover-url-import input:focus { border-color: #84adff; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.input-action-row .secondary-button { flex: 0 0 auto; }
 .file-button { position: relative; overflow: hidden; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .field-help { margin: .45rem 0 0; font-size: .76rem; font-weight: 400; }
@@ -236,6 +241,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .remove-row:hover { background: #fef3f2; }
 .inline-field { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; margin-top: .3rem; color: var(--muted); font-size: .78rem; font-weight: 400; }
 .inline-field input { width: 70px !important; min-height: 36px !important; padding: .3rem !important; }
+.timer-fields label { display: flex; align-items: center; gap: .3rem; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line-soft); cursor: pointer; }
 .switch-row span { display: grid; gap: .2rem; }
 .switch-row small { color: var(--muted); font-weight: 400; }
@@ -310,7 +316,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .cover-card-heading { padding: 1rem; }
   .cover-preview { border-right: 0; border-block: 1px solid var(--line-soft); }
   .cover-card .cover-actions { margin-top: .75rem; padding-inline: 1rem; }
+  .cover-url-import { padding-inline: 1rem; }
   .cover-card .field-help { padding: 0 1rem 1rem; }
+  .input-action-row { align-items: stretch; flex-direction: column; }
   .editor-intro { margin: .4rem 0 1.25rem; }
   .field-grid { grid-template-columns: 1fr; }
   .ingredient-column-labels { display: none; }

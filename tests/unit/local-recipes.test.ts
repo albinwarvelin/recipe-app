@@ -84,9 +84,11 @@ describe('local-first recipe repository', () => {
   });
 
   it('removes a never-synchronized recipe instead of uploading a create and delete', async () => {
-    const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Temporary' }, { kind: 'keep' });
+    const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Temporary', tags: [{ name: 'Tillfällig' }] }, { kind: 'keep' });
+    expect(await db.tags.toArray()).toMatchObject([{ name: 'Tillfällig' }]);
     await deleteLocalRecipe(recipe);
     expect(await db.recipes.get(recipe.id)).toBeUndefined();
     expect(await db.outbox.count()).toBe(0);
+    expect(await db.tags.count()).toBe(0);
   });
 });

@@ -16,7 +16,7 @@ export const recipeLimits = {
   ingredientGroup: 120,
   instructions: 100,
   instructionText: 5_000,
-  timerSeconds: 86_400,
+  timerSeconds: 7 * 24 * 60 * 60,
   tags: 50,
   tagName: 80,
 } as const;

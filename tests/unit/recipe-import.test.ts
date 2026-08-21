@@ -30,6 +30,20 @@ describe('recipe JSON import', () => {
     });
   });
 
+  it('maps long timers from hours and remaining minutes while retaining minute-only compatibility', () => {
+    const { draft } = parseRecipeImport(JSON.stringify({
+      format: 'recipe-app', version: 1,
+      recipe: { instructions: [
+        { text: 'Jäs över natten.', timer_hours: 12, timer_minutes: 30 },
+        { text: 'Äldre format.', timer_minutes: 720 },
+      ] },
+    }));
+    expect(draft.instructions).toMatchObject([
+      { timer_seconds: 45_000 },
+      { timer_seconds: 43_200 },
+    ]);
+  });
+
   it('uses editable defaults for omitted recipe fields and accepts a single JSON code fence', () => {
     const { draft } = parseRecipeImport('```json\n{"format":"recipe-app","version":1,"recipe":{}}\n```');
     expect(draft).toMatchObject({ title: '', servings: null, ingredients: [], instructions: [], tags: [] });
@@ -50,8 +64,11 @@ describe('recipe JSON import', () => {
   it('documents estimated preparation, cooking, step times, and a separate image URL', () => {
     expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('Ange alltid prep_minutes och cook_minutes');
     expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('uppskatta annars en realistisk tid');
-    expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('timer_minutes för varje steg');
+    expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('timer_hours och timer_minutes');
+    expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('aldrig 720 minuter');
     expect(RECIPE_IMPORT_AI_INSTRUCTION).toContain('direkt, offentlig http- eller https-adress');
-    expect(JSON.parse(RECIPE_IMPORT_TEMPLATE).recipe).toHaveProperty('image_url', null);
+    const template = JSON.parse(RECIPE_IMPORT_TEMPLATE).recipe;
+    expect(template).toHaveProperty('image_url', null);
+    expect(template.instructions[0]).toMatchObject({ timer_hours: 12, timer_minutes: 0 });
   });
 });

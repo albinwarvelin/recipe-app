@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import { createRecipe, deleteRecipe, getRecipe, listIngredientCatalog, recipeChanges, updateRecipe } from '../../worker/data/recipes';
+import { createRecipe, deleteRecipe, getRecipe, listIngredientCatalog, listTags, recipeChanges, updateRecipe } from '../../worker/data/recipes';
 import { recipeInputSchema, recipePatchSchema } from '../../worker/validation/recipes';
 
 describe('recipe aggregate persistence', () => {
@@ -48,6 +48,7 @@ describe('recipe aggregate persistence', () => {
     expect(deleted).toMatchObject({ kind: 'success', status: 200 });
     expect(await getRecipe(env.DB, createdRecipe.id)).toBeNull();
     expect(await getRecipe(env.DB, createdRecipe.id, true)).toMatchObject({ version: 3, deleted_at: expect.any(String) });
+    expect((await listTags(env.DB)).some((tag) => tag.name === 'Dessert' || tag.name === 'Tested')).toBe(false);
   });
 
   it('serves bilingual catalogue entries', async () => {
@@ -67,5 +68,23 @@ describe('recipe aggregate persistence', () => {
       { name: 'Crème', normalized_name: 'crème' },
       { name: 'Creme', normalized_name: 'creme' },
     ]));
+  });
+
+  it('removes tags after their final active recipe stops using them', async () => {
+    const input = recipeInputSchema.parse({ title: 'Temporary tag', tags: [{ name: 'Tillfällig' }] });
+    const created = await createRecipe(env.DB, input, {
+      operationId: crypto.randomUUID(), method: 'POST', path: '/api/recipes', body: input,
+    });
+    if (created.kind !== 'success') throw new Error('Expected recipe creation to succeed');
+    const recipe = (created.body as { recipe: { id: string } }).recipe;
+    expect((await listTags(env.DB)).some((tag) => tag.name === 'Tillfällig')).toBe(true);
+
+    const patch = recipePatchSchema.parse({ base_version: 1, tags: [] });
+    await updateRecipe(env.DB, recipe.id, patch, {
+      operationId: crypto.randomUUID(), method: 'PATCH', path: `/api/recipes/${recipe.id}`, body: patch,
+    });
+
+    expect((await listTags(env.DB)).some((tag) => tag.name === 'Tillfällig')).toBe(false);
+    expect(await env.DB.prepare("SELECT id FROM tags WHERE name = 'Tillfällig'").first()).toBeNull();
   });
 });

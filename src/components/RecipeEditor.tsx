@@ -4,12 +4,14 @@ import type { LocalIngredientCatalog, LocalRecipe, LocalTag } from '../data/db';
 import { draftFromLocalRecipe, type CoverChange } from '../data/local-recipes';
 import { validateRecipeDraft } from '../data/validate-recipe';
 import { useImageUrl } from '../hooks/useLocalData';
+import { prepareImportedCoverImage } from '../images/import';
 import { prepareCoverImage } from '../images/process';
 import { AppToolbar } from './AppToolbar';
 import { CheckIcon, CloseIcon, ImageIcon, PlusIcon, TrashIcon } from './Icons';
 import { IngredientCombobox } from './IngredientCombobox';
 import { TagPicker } from './TagPicker';
 import { recipeLimits } from '../../shared/recipe-validation';
+import { timerDurationParts, timerDurationSeconds } from '../../shared/timer-duration';
 
 export const emptyRecipeDraft: RecipeDraft = {
   title: '', description: '', servings: null, prep_minutes: null, cook_minutes: null,
@@ -38,6 +40,7 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(initialMessage ?? null);
+  const [imageUrlInput, setImageUrlInput] = useState('');
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   useEffect(() => {
@@ -52,16 +55,25 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
   function updateInstruction(index: number, patch: Partial<Instruction>) {
     setDraft((current) => ({ ...current, instructions: current.instructions.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) }));
   }
+  function applyCoverImage(image: Awaited<ReturnType<typeof prepareCoverImage>>) {
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(URL.createObjectURL(image.thumbnail));
+    setCover({ kind: 'replace', image });
+  }
+  async function prepareSelectedImage(action: () => ReturnType<typeof prepareCoverImage>, fallbackMessage: string): Promise<boolean> {
+    setProcessing(true); setMessage(null);
+    try { applyCoverImage(await action()); return true; }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : fallbackMessage); return false; }
+    finally { setProcessing(false); }
+  }
   async function chooseImage(file: File | undefined) {
     if (!file) return;
-    setProcessing(true); setMessage(null);
-    try {
-      const image = await prepareCoverImage(file);
-      if (preview) URL.revokeObjectURL(preview);
-      setPreview(URL.createObjectURL(image.thumbnail));
-      setCover({ kind: 'replace', image });
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Bilden kunde inte förberedas.'); }
-    finally { setProcessing(false); }
+    await prepareSelectedImage(() => prepareCoverImage(file), 'Bilden kunde inte förberedas.');
+  }
+  async function chooseImageUrl() {
+    const url = imageUrlInput.trim();
+    if (!url) return;
+    if (await prepareSelectedImage(() => prepareImportedCoverImage(url), 'Bilden kunde inte hämtas eller förberedas.')) setImageUrlInput('');
   }
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setMessage(null);
@@ -101,6 +113,13 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
           {allowCoverChanges && <div className="cover-actions">
             <label className="secondary-button file-button"><ImageIcon size={18} />{coverUrl ? 'Byt bild' : 'Välj bild'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={(event) => void chooseImage(event.target.files?.[0])} /></label>
             {coverUrl && <button className="button-quiet button-danger" type="button" onClick={() => { if (preview) URL.revokeObjectURL(preview); setCover({ kind: 'remove' }); setPreview(null); }}><TrashIcon />Ta bort</button>}
+          </div>}
+          {allowCoverChanges && <div className="cover-url-import">
+            <label className="field-label" htmlFor="cover-image-url">Eller använd en bildadress</label>
+            <div className="input-action-row">
+              <input id="cover-image-url" type="url" inputMode="url" maxLength={recipeLimits.sourceUrl} placeholder="https://example.com/bild.jpg" value={imageUrlInput} onChange={(event) => setImageUrlInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void chooseImageUrl(); } }} />
+              <button className="secondary-button" type="button" disabled={processing || !imageUrlInput.trim()} onClick={() => void chooseImageUrl()}>Hämta bild</button>
+            </div>
           </div>}
           <p className="field-help">{allowCoverChanges ? 'JPEG, PNG, WebP, HEIC eller HEIF. Bilden omvandlas privat på enheten.' : 'Omslagsbilden valdes i konfliktgranskningen.'}</p>
         </section>
@@ -152,7 +171,14 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
 
         <section className="form-card editor-section">
           <div className="form-section-heading"><div><h2 className="heading-2">Gör så här</h2><p className="text-body-small">Dela upp tillagningen i korta steg som är lätta att följa.</p></div><button className="section-action" type="button" disabled={draft.instructions.length >= recipeLimits.instructions} onClick={addInstruction}><PlusIcon size={18} />Lägg till steg</button></div>
-          {draft.instructions.length > 0 ? <div className="editor-list instruction-editor-list">{draft.instructions.map((instruction, index) => <div className="instruction-editor-row" key={instruction.id ?? index}><span>{index + 1}</span><div><textarea required rows={3} maxLength={recipeLimits.instructionText} aria-label={`Steg ${index + 1}`} value={instruction.text} onChange={(event) => updateInstruction(index, { text: event.target.value })} placeholder="Beskriv momentet" /><label className="inline-field"><span>Timer</span><input type="number" min="0" max={recipeLimits.timerSeconds / 60} aria-label={`Steg ${index + 1}, timer i minuter`} value={instruction.timer_seconds ? Math.round(instruction.timer_seconds / 60) : ''} onChange={(event) => updateInstruction(index, { timer_seconds: event.target.value ? Number(event.target.value) * 60 : null })} /><span>min</span></label></div><button className="remove-row" type="button" aria-label={`Ta bort steg ${index + 1}`} onClick={() => setDraft({ ...draft, instructions: draft.instructions.filter((_, itemIndex) => itemIndex !== index) })}><CloseIcon /></button></div>)}</div> : <button className="editor-empty-action" type="button" onClick={addInstruction}><PlusIcon /><span><strong>Lägg till första steget</strong><small>Beskriv vad som ska göras i rätt ordning</small></span></button>}
+          {draft.instructions.length > 0 ? <div className="editor-list instruction-editor-list">{draft.instructions.map((instruction, index) => {
+            const duration = timerDurationParts(instruction.timer_seconds);
+            const updateDuration = (part: 'hours' | 'minutes', value: string) => {
+              const next = { ...duration, [part]: value === '' ? 0 : Number(value) };
+              updateInstruction(index, { timer_seconds: timerDurationSeconds(next.hours, next.minutes, recipeLimits.timerSeconds) });
+            };
+            return <div className="instruction-editor-row" key={instruction.id ?? index}><span>{index + 1}</span><div><textarea required rows={3} maxLength={recipeLimits.instructionText} aria-label={`Steg ${index + 1}`} value={instruction.text} onChange={(event) => updateInstruction(index, { text: event.target.value })} placeholder="Beskriv momentet" /><div className="inline-field timer-fields"><span>Timer</span><label><input type="number" min="0" max={recipeLimits.timerSeconds / 3_600} aria-label={`Steg ${index + 1}, timer i timmar`} value={duration.hours || ''} onChange={(event) => updateDuration('hours', event.target.value)} /><span>tim</span></label><label><input type="number" min="0" max="59" aria-label={`Steg ${index + 1}, timer i minuter`} value={duration.minutes || ''} onChange={(event) => updateDuration('minutes', event.target.value)} /><span>min</span></label></div></div><button className="remove-row" type="button" aria-label={`Ta bort steg ${index + 1}`} onClick={() => setDraft({ ...draft, instructions: draft.instructions.filter((_, itemIndex) => itemIndex !== index) })}><CloseIcon /></button></div>;
+          })}</div> : <button className="editor-empty-action" type="button" onClick={addInstruction}><PlusIcon /><span><strong>Lägg till första steget</strong><small>Beskriv vad som ska göras i rätt ordning</small></span></button>}
         </section>
 
         <section className="form-card editor-section">

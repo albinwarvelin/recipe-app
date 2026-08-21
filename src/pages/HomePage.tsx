@@ -11,6 +11,7 @@ import { RecipeDetail } from '../components/RecipeDetail';
 import { RecipeEditor } from '../components/RecipeEditor';
 import { SettingsView } from '../components/SettingsView';
 import { SyncIndicator } from '../components/SyncIndicator';
+import { matchingTags } from '../components/TagPicker';
 import type { LocalIngredientCatalog, LocalRecipe, LocalTag, RecipeConflict } from '../data/db';
 import { deleteLocalRecipe, saveLocalRecipe, setLocalFavorite, type CoverChange } from '../data/local-recipes';
 import { normalizeSearchValue } from '../data/normalize';
@@ -33,7 +34,9 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
   const [params, setParams] = useSearchParams();
   const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
   const [ingredientSearch, setIngredientSearch] = useState('');
+  const [tagSearch, setTagSearch] = useState('');
   const ingredientInput = useRef<HTMLInputElement>(null);
+  const tagInput = useRef<HTMLInputElement>(null);
   const query = params.get('q') ?? '';
   const ingredientIds = params.getAll('ingredient');
   const tagIds = params.getAll('tag');
@@ -48,9 +51,9 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Element) || !target.closest('[data-popover-root]')) { setOpenPopover(null); setIngredientSearch(''); }
+      if (!(target instanceof Element) || !target.closest('[data-popover-root]')) { setOpenPopover(null); setIngredientSearch(''); setTagSearch(''); }
     };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpenPopover(null); setIngredientSearch(''); } };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpenPopover(null); setIngredientSearch(''); setTagSearch(''); } };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
     return () => {
@@ -102,12 +105,17 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
       .slice(0, 40);
   }, [catalog, ingredientIds.join('|'), ingredientSearch]);
 
+  const tagAlternatives = useMemo(() => matchingTags(tags, tagSearch, new Set(), 40)
+    .sort((left, right) => Number(tagIds.includes(left.id)) - Number(tagIds.includes(right.id)) || left.name.localeCompare(right.name, 'sv')),
+  [tagIds.join('|'), tagSearch, tags]);
+
   const timeLabel = maxTime ? `Högst ${maxTime} min` : 'Alla';
   const sortLabel = sort === 'title' ? 'Namn' : sort === 'time' ? 'Kortast tid' : 'Senast ändrad';
   const togglePopover = (popover: Exclude<OpenPopover, null>) => {
     const next = openPopover === popover ? null : popover;
     setOpenPopover(next);
     if (next !== 'ingredients') setIngredientSearch('');
+    if (next !== 'tags') setTagSearch('');
   };
 
   const activeFilters = [
@@ -144,7 +152,19 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
             </div>}
           </div>
 
-          <div className="filter-control" data-popover-root><button className="filter-trigger" type="button" aria-expanded={openPopover === 'tags'} onClick={() => togglePopover('tags')}><span>Taggar{tagIds.length ? ` (${tagIds.length})` : ''}</span><ChevronDownIcon className={openPopover === 'tags' ? 'is-rotated' : ''} /></button>{openPopover === 'tags' && <div className="filter-popover"><div className="mode-switch" aria-label="Matchning av taggar"><button type="button" className={tagMode === 'any' ? 'active' : ''} onClick={() => updateParam('tagMode', 'any')}>Någon</button><button type="button" className={tagMode === 'all' ? 'active' : ''} onClick={() => updateParam('tagMode', 'all')}>Alla</button></div><div className="filter-options">{tags.map((tag) => <label key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggleList('tag', tagIds, tag.id)} /><span>{tag.name}</span></label>)}</div></div>}</div>
+          <div className="filter-control tag-filter" data-popover-root>
+            <div className={`ingredient-filter-trigger ${openPopover === 'tags' ? 'is-open' : ''}`}>
+              <input ref={tagInput} type="search" value={tagSearch} onFocus={() => setOpenPopover('tags')} onChange={(event) => { setTagSearch(event.target.value); setOpenPopover('tags'); }} placeholder={tagIds.length ? `Taggar (${tagIds.length})` : 'Taggar'} aria-label="Sök och filtrera på taggar" aria-expanded={openPopover === 'tags'} aria-controls="tag-filter-options" />
+              <button type="button" aria-label="Visa taggar" onClick={() => {
+                if (openPopover === 'tags') { setOpenPopover(null); setTagSearch(''); }
+                else { setOpenPopover('tags'); requestAnimationFrame(() => tagInput.current?.focus()); }
+              }}><ChevronDownIcon className={openPopover === 'tags' ? 'is-rotated' : ''} /></button>
+            </div>
+            {openPopover === 'tags' && <div className="filter-popover tag-filter-popover" id="tag-filter-options">
+              <div className="mode-switch" aria-label="Matchning av taggar"><button type="button" className={tagMode === 'any' ? 'active' : ''} onClick={() => updateParam('tagMode', 'any')}>Någon</button><button type="button" className={tagMode === 'all' ? 'active' : ''} onClick={() => updateParam('tagMode', 'all')}>Alla</button></div>
+              <div className="filter-options">{tagAlternatives.length ? tagAlternatives.map((tag) => <label key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggleList('tag', tagIds, tag.id)} /><span>{tag.name}</span></label>) : <p className="filter-empty">Ingen tagg matchar.</p>}</div>
+            </div>}
+          </div>
 
           <button className={favoritesOnly ? 'filter-trigger filter-button active' : 'filter-trigger filter-button'} type="button" onClick={() => updateParam('favorite', favoritesOnly ? null : '1')}><StarIcon /><span>Favoriter</span></button>
 

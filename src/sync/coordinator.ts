@@ -261,7 +261,7 @@ async function refreshReferenceData(): Promise<void> {
   const [catalog, tags] = await Promise.all([getIngredientCatalog(), getTags()]);
   const pendingOperations = (await db.outbox.toArray()).filter((entry) => entry.type.startsWith('recipe-'));
   const pendingRecipes = (await Promise.all([...new Set(pendingOperations.map((entry) => entry.entity_id))].map((id) => db.recipes.get(id))))
-    .filter((recipe): recipe is LocalRecipe => Boolean(recipe));
+    .filter((recipe): recipe is LocalRecipe => Boolean(recipe && !recipe.deleted_at));
   const preservedCatalogIds = new Set(pendingRecipes.flatMap((recipe) => recipe.ingredients.flatMap((item) => item.catalog_id ? [item.catalog_id] : [])));
   const preservedCatalog = (await Promise.all([...preservedCatalogIds].map((id) => db.ingredientCatalog.get(id))))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));

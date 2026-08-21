@@ -19,8 +19,17 @@ const importIngredientSchema = z.object({
 
 const importInstructionSchema = z.object({
   text: z.string().trim().max(recipeLimits.instructionText).optional().default(''),
+  timer_hours: z.number().int().min(0).max(recipeLimits.timerSeconds / 3_600).nullable().optional().default(null),
   timer_minutes: z.number().int().min(0).max(recipeLimits.timerSeconds / 60).nullable().optional().default(null),
-}).strict();
+}).strict().superRefine((instruction, context) => {
+  if (instruction.timer_hours !== null && instruction.timer_minutes !== null && instruction.timer_minutes >= 60) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['timer_minutes'], message: 'Minutes must be below 60 when hours are provided.' });
+  }
+  const totalSeconds = ((instruction.timer_hours ?? 0) * 60 + (instruction.timer_minutes ?? 0)) * 60;
+  if (totalSeconds > recipeLimits.timerSeconds) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['timer_hours'], message: 'The timer duration is too long.' });
+  }
+});
 
 const importRecipeSchema = z.object({
   title: z.string().trim().max(recipeLimits.title).optional().default(''),
@@ -63,7 +72,7 @@ export const RECIPE_IMPORT_TEMPLATE = JSON.stringify({
     image_url: null,
     notes: '',
     ingredients: [{ amount: '2', unit: 'dl', name: 'Vetemjöl', group: null }],
-    instructions: [{ text: 'Blanda ingredienserna.', timer_minutes: null }],
+    instructions: [{ text: 'Låt degen jäsa över natten.', timer_hours: 12, timer_minutes: 0 }],
     tags: ['Middag'],
   },
 }, null, 2);
@@ -75,13 +84,14 @@ Regler:
 - Bevara receptets språk.
 - Hitta inte på mängder eller portioner. Ange heltal och använd null när de uppgifterna saknas.
 - Var noggrann med tidsuppgifterna. Ange alltid prep_minutes och cook_minutes som hela minuter. Använd källans tid när den finns; uppskatta annars en realistisk tid utifrån arbetsmomenten.
-- Ange timer_minutes för varje steg som har en meningsfull varaktighet, till exempel kokning, stekning, bakning, vila, jäsning, marinering eller kylning. Använd källans tid när den finns och en realistisk uppskattning annars. Om källan anger ett intervall, använd en rimlig heltalsuppskattning inom intervallet.
+- Ange timer_hours och timer_minutes för varje steg som har en meningsfull varaktighet, till exempel kokning, stekning, bakning, vila, jäsning, marinering eller kylning. Använd timmar och återstående minuter för tider på minst en timme, till exempel 12 timmar som timer_hours 12 och timer_minutes 0, aldrig 720 minuter. Använd källans tid när den finns och en realistisk uppskattning annars. Om källan anger ett intervall, använd en rimlig heltalsuppskattning inom intervallet.
 - Håll mängd och enhet separerade. Mängd ska vara text, till exempel "2" eller "1/2".
 - Använd svenska metriska kortformer när enheten kan uttryckas entydigt: krm, tsk, msk, ml, cl, dl, l, g, kg och st.
 - Lägg varje arbetsmoment i en separat instruktion.
 - Använd source_type "online" och ange originalets webbplats och URL när receptet kommer från en webbsida. Använd annars source_type "ai".
 - Ange image_url som en direkt, offentlig http- eller https-adress till receptets primära bild när en sådan finns. Använd null om adressen saknas eller är osäker. Lägg aldrig in bilddata, base64, en webbsidesadress eller en påhittad bildadress i image_url.
 - Följ fälten i mallen exakt och lägg inte till andra fält.
+- Taggar ska vara korta, generella kategorier som beskriver receptet. Använd inte ingredienser eller andra detaljer som taggar.
 
 JSON-mall:
 ${RECIPE_IMPORT_TEMPLATE}`;
@@ -169,7 +179,9 @@ export function parseRecipeImport(raw: string): ParsedRecipeImport {
       })),
       instructions: recipe.instructions.map((instruction) => ({
         text: instruction.text,
-        timer_seconds: instruction.timer_minutes === null ? null : instruction.timer_minutes * 60,
+        timer_seconds: instruction.timer_hours === null && instruction.timer_minutes === null
+          ? null
+          : ((instruction.timer_hours ?? 0) * 60 + (instruction.timer_minutes ?? 0)) * 60 || null,
       })),
       tags: recipe.tags.map((name) => ({ name })),
     },

@@ -5,6 +5,7 @@ import { useImageUrl } from '../hooks/useLocalData';
 import { ensureFullImage } from '../sync/coordinator';
 import { AppToolbar } from './AppToolbar';
 import { ArrowLeftIcon, EditIcon, TrashIcon } from './Icons';
+import { formatTimerDuration } from '../../shared/timer-duration';
 
 function safeWebUrl(value: string | null): string | null {
   if (!value) return null;
@@ -36,7 +37,7 @@ export function RecipeDetail({ recipe, backTo, onDelete }: { recipe: LocalRecipe
         <div className="detail-facts">{minutes > 0 && <span><strong>{minutes}</strong> minuter</span>}{recipe.servings && <span><strong>{recipe.servings}</strong> portioner</span>}</div>
         {recipe.tags.length > 0 && <div className="tag-list">{recipe.tags.map((tag) => <Link key={tag.id ?? tag.name} to={`/?tag=${encodeURIComponent(tag.id ?? tag.name)}`}>{tag.name}</Link>)}</div>}
         <section><h2 className="heading-2">Ingredienser</h2>{recipe.ingredients.length ? <ul className="ingredient-list">{recipe.ingredients.map((item) => <li key={item.id}><span>{[item.amount, item.unit].filter(Boolean).join(' ')}</span><strong>{item.name}</strong></li>)}</ul> : <p className="text-body-muted">Inga ingredienser tillagda.</p>}</section>
-        <section><h2 className="heading-2">Gör så här</h2>{recipe.instructions.length ? <ol className="instruction-list">{recipe.instructions.map((item, index) => <li key={item.id}><span>{index + 1}</span><p className="text-body">{item.text}{item.timer_seconds ? <small>{Math.round(item.timer_seconds / 60)} min timer</small> : null}</p></li>)}</ol> : <p className="text-body-muted">Inga steg tillagda.</p>}</section>
+        <section><h2 className="heading-2">Gör så här</h2>{recipe.instructions.length ? <ol className="instruction-list">{recipe.instructions.map((item, index) => <li key={item.id}><span>{index + 1}</span><p className="text-body">{item.text}{item.timer_seconds ? <small>Timer: {formatTimerDuration(item.timer_seconds)}</small> : null}</p></li>)}</ol> : <p className="text-body-muted">Inga steg tillagda.</p>}</section>
         {recipe.notes && <section><h2 className="heading-2">Anteckningar</h2><p className="text-body preserve-lines">{recipe.notes}</p></section>}
       </article>
     </main>
