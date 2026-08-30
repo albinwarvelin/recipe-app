@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
@@ -21,6 +21,73 @@ import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServe
 type MatchMode = 'any' | 'all';
 type SortMode = 'updated' | 'title' | 'time';
 type OpenPopover = 'app' | 'create' | 'ingredients' | 'tags' | 'time' | 'sort' | null;
+const pullSyncThreshold = 58;
+
+function usePullToSync(disabled: boolean): { active: boolean; distance: number; ready: boolean } {
+  const [pull, setPull] = useState({ active: false, distance: 0 });
+
+  useEffect(() => {
+    let tracking = false;
+    let startX = 0;
+    let startY = 0;
+    let currentDistance = 0;
+
+    const reset = () => {
+      tracking = false;
+      currentDistance = 0;
+      setPull({ active: false, distance: 0 });
+    };
+    const start = (event: TouchEvent) => {
+      if (disabled || event.touches.length !== 1 || window.scrollY > 0) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .filter-popover')) return;
+      tracking = true;
+      startX = event.touches[0].clientX;
+      startY = event.touches[0].clientY;
+    };
+    const move = (event: TouchEvent) => {
+      if (!tracking || event.touches.length !== 1) return;
+      const deltaX = event.touches[0].clientX - startX;
+      const deltaY = event.touches[0].clientY - startY;
+      if (deltaY <= 0 || Math.abs(deltaX) > Math.abs(deltaY) || window.scrollY > 0) {
+        if (currentDistance > 0) reset(); else tracking = false;
+        return;
+      }
+      if (deltaY < 8) return;
+      event.preventDefault();
+      currentDistance = Math.min(82, (deltaY - 8) * .46);
+      setPull({ active: true, distance: currentDistance });
+    };
+    const finish = () => {
+      if (!tracking) return;
+      if (currentDistance >= pullSyncThreshold) void syncNow();
+      reset();
+    };
+    const cancel = () => { if (tracking) reset(); };
+
+    window.addEventListener('touchstart', start, { passive: true });
+    window.addEventListener('touchmove', move, { passive: false });
+    window.addEventListener('touchend', finish, { passive: true });
+    window.addEventListener('touchcancel', cancel, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', start);
+      window.removeEventListener('touchmove', move);
+      window.removeEventListener('touchend', finish);
+      window.removeEventListener('touchcancel', cancel);
+    };
+  }, [disabled]);
+
+  return { ...pull, ready: pull.distance >= pullSyncThreshold };
+}
+
+function RouteScrollReset() {
+  const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    window.history.scrollRestoration = 'manual';
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [pathname]);
+  return null;
+}
 
 function setValues(params: URLSearchParams, key: string, values: string[]): URLSearchParams {
   const next = new URLSearchParams(params);
@@ -29,8 +96,9 @@ function setValues(params: URLSearchParams, key: string, values: string[]): URLS
   return next;
 }
 
-function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: LocalRecipe[]; recipesStatus: LocalQueryState<LocalRecipe[]>['status']; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; email?: string }) {
+function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalRecipe[]; recipesStatus: LocalQueryState<LocalRecipe[]>['status']; catalog: LocalIngredientCatalog[]; tags: LocalTag[] }) {
   const sync = useSyncState();
+  const pullSync = usePullToSync(sync.phase === 'syncing');
   const [params, setParams] = useSearchParams();
   const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
   const [ingredientSearch, setIngredientSearch] = useState('');
@@ -129,10 +197,14 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
   return <div className="app-shell">
     <header className="navigation-bar">
       <div className="navigation-bar-inner page-container">
-        <div><p className="text-eyebrow">Privat kök</p><h1 className="heading-1">Recept</h1></div>
-        <div className="header-actions"><SyncIndicator state={sync} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut{email ? ` (${email})` : ''}</a></div>}</div></div>
+        <div className="library-title"><p className="text-eyebrow">Privat kök</p><h1 className="heading-1">Recept</h1></div>
+        <div className="header-actions"><SyncIndicator state={sync} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut</a></div>}</div></div>
       </div>
     </header>
+    <div className={`pull-sync${pullSync.active ? ' is-active' : ''}${pullSync.ready ? ' is-ready' : ''}`} style={{ height: `${pullSync.distance}px` }} aria-hidden="true">
+      <span className="pull-sync-dot" />
+      <span>{pullSync.ready ? 'Släpp för att synkronisera' : 'Dra för att synkronisera'}</span>
+    </div>
     <main className="library-content page-container">
       {(sync.phase === 'offline' || sync.phase === 'auth-required' || sync.phase === 'error') && <div className={`offline-banner ${sync.phase}`}><span>{sync.phase === 'offline' ? 'Offline — ändringar sparas på den här enheten.' : sync.message ?? 'Synkronisering är inte tillgänglig.'}</span>{sync.phase === 'auth-required' && <button type="button" onClick={() => window.location.assign('/')}>Logga in</button>}{sync.phase === 'error' && <button type="button" onClick={() => void syncNow()}>Försök igen</button>}</div>}
       <section className="library-controls">
@@ -166,11 +238,11 @@ function Library({ recipes, recipesStatus, catalog, tags, email }: { recipes: Lo
             </div>}
           </div>
 
-          <button className={favoritesOnly ? 'filter-trigger filter-button active' : 'filter-trigger filter-button'} type="button" onClick={() => updateParam('favorite', favoritesOnly ? null : '1')}><StarIcon /><span>Favoriter</span></button>
+          <button className={favoritesOnly ? 'filter-trigger filter-button favorite-filter active' : 'filter-trigger filter-button favorite-filter'} type="button" onClick={() => updateParam('favorite', favoritesOnly ? null : '1')}><StarIcon /><span>Favoriter</span></button>
 
-          <div className="filter-control" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'time'} onClick={() => togglePopover('time')}><span className="filter-trigger-label">Tid</span><span>{timeLabel}</span><ChevronDownIcon className={openPopover === 'time' ? 'is-rotated' : ''} /></button>{openPopover === 'time' && <div className="filter-popover filter-choice-popover">{[['', 'Alla'], ['15', 'Högst 15 min'], ['30', 'Högst 30 min'], ['60', 'Högst 60 min']].map(([value, label]) => <button key={value || 'all'} type="button" className="filter-choice" onClick={() => { updateParam('maxTime', value || null); setOpenPopover(null); }}><span>{label}</span>{String(maxTime || '') === value && <CheckIcon />}</button>)}</div>}</div>
+          <div className="filter-control time-filter" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'time'} onClick={() => togglePopover('time')}><span className="filter-trigger-label">Tid</span><span className="filter-current-value">{timeLabel}</span><ChevronDownIcon className={openPopover === 'time' ? 'is-rotated' : ''} /></button>{openPopover === 'time' && <div className="filter-popover filter-choice-popover">{[['', 'Alla'], ['15', 'Högst 15 min'], ['30', 'Högst 30 min'], ['60', 'Högst 60 min']].map(([value, label]) => <button key={value || 'all'} type="button" className="filter-choice" onClick={() => { updateParam('maxTime', value || null); setOpenPopover(null); }}><span>{label}</span>{String(maxTime || '') === value && <CheckIcon />}</button>)}</div>}</div>
 
-          <div className="filter-control" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'sort'} onClick={() => togglePopover('sort')}><span className="filter-trigger-label">Sortera</span><span>{sortLabel}</span><ChevronDownIcon className={openPopover === 'sort' ? 'is-rotated' : ''} /></button>{openPopover === 'sort' && <div className="filter-popover filter-choice-popover align-right">{([['updated', 'Senast ändrad'], ['title', 'Namn'], ['time', 'Kortast tid']] as Array<[SortMode, string]>).map(([value, label]) => <button key={value} type="button" className="filter-choice" onClick={() => { updateParam('sort', value === 'updated' ? null : value); setOpenPopover(null); }}><span>{label}</span>{sort === value && <CheckIcon />}</button>)}</div>}</div>
+          <div className="filter-control sort-filter" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'sort'} onClick={() => togglePopover('sort')}><span className="filter-trigger-label">Sortera</span><span className="filter-current-value">{sortLabel}</span><ChevronDownIcon className={openPopover === 'sort' ? 'is-rotated' : ''} /></button>{openPopover === 'sort' && <div className="filter-popover filter-choice-popover align-right">{([['updated', 'Senast ändrad'], ['title', 'Namn'], ['time', 'Kortast tid']] as Array<[SortMode, string]>).map(([value, label]) => <button key={value} type="button" className="filter-choice" onClick={() => { updateParam('sort', value === 'updated' ? null : value); setOpenPopover(null); }}><span>{label}</span>{sort === value && <CheckIcon />}</button>)}</div>}</div>
         </div>
         {activeFilters.length > 0 && <div className="active-filter-row" aria-label="Aktiva filter">{activeFilters.map((filter) => <button key={filter.key} type="button" onClick={filter.remove}>{filter.label}<CloseIcon size={14} /></button>)}<button className="clear-filters" type="button" onClick={() => setParams({}, { replace: true })}>Rensa alla</button></div>}
       </section>
@@ -261,8 +333,8 @@ export function HomePage({ email }: { email?: string }) {
 
   const resolvingConflict = /^\/recipes\/[^/]+\/conflict$/.test(location.pathname);
   const dialog = !resolvingConflict && conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void keepLocal(conflicts[0])} onKeepServer={() => void keepServer(conflicts[0])} onMerge={() => navigate(`/recipes/${conflicts[0].entity_id}/conflict`)} />;
-  return <><Routes>
-    <Route path="/" element={<Library recipes={recipes} recipesStatus={recipesState.status} catalog={catalog} tags={tags} email={email} />} />
+  return <><RouteScrollReset /><Routes>
+    <Route path="/" element={<Library recipes={recipes} recipesStatus={recipesState.status} catalog={catalog} tags={tags} />} />
     <Route path="/recipes/new" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
     <Route path="/recipes/import" element={<ImportRoute catalog={catalog} tags={tags} />} />
     <Route path="/recipes/:recipeId" element={<DetailRoute recipesState={recipesState} onDelete={remove} />} />

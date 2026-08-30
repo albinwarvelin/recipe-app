@@ -11,6 +11,8 @@ export interface SyncSnapshot { phase: SyncPhase; pending: number; lastSync: str
 let snapshot: SyncSnapshot = { phase: navigator.onLine ? 'idle' : 'offline', pending: 0, lastSync: null, message: null };
 let activeSync: Promise<void> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+const fullImageRequests = new Map<string, Promise<void>>();
+const thumbnailImageRequests = new Map<string, Promise<void>>();
 const listeners = new Set<(next: SyncSnapshot) => void>();
 
 async function pruneFullImageCache(): Promise<void> {
@@ -199,15 +201,23 @@ async function processOutbox(): Promise<void> {
 async function cacheThumbnail(imageId: string): Promise<void> {
   const existing = await db.images.get(imageId);
   if (existing?.thumbnail_blob) return;
-  const full = await downloadImage(imageId);
+  const full = existing?.full_blob ?? await downloadImage(imageId);
   const thumbnail = await thumbnailFromWebp(full);
   const timestamp = new Date().toISOString();
   const bitmap = await createImageBitmap(full);
   const width = bitmap.width; const height = bitmap.height; bitmap.close();
-  await db.images.put({ id: imageId, thumbnail_blob: thumbnail, width, height, byte_size: full.size, remote: true, created_at: timestamp, last_accessed_at: timestamp });
+  await db.images.put({ ...existing, id: imageId, thumbnail_blob: thumbnail, width, height, byte_size: full.size, remote: true, created_at: existing?.created_at ?? timestamp, last_accessed_at: timestamp });
 }
 
-export async function ensureFullImage(imageId: string): Promise<void> {
+export function ensureThumbnailImage(imageId: string): Promise<void> {
+  const active = thumbnailImageRequests.get(imageId);
+  if (active) return active;
+  const request = cacheThumbnail(imageId).finally(() => thumbnailImageRequests.delete(imageId));
+  thumbnailImageRequests.set(imageId, request);
+  return request;
+}
+
+async function downloadFullImage(imageId: string): Promise<void> {
   const existing = await db.images.get(imageId);
   if (existing?.full_blob) {
     await db.images.update(imageId, { last_accessed_at: new Date().toISOString() });
@@ -224,6 +234,14 @@ export async function ensureFullImage(imageId: string): Promise<void> {
   await pruneFullImageCache();
 }
 
+export function ensureFullImage(imageId: string): Promise<void> {
+  const active = fullImageRequests.get(imageId);
+  if (active) return active;
+  const request = downloadFullImage(imageId).finally(() => fullImageRequests.delete(imageId));
+  fullImageRequests.set(imageId, request);
+  return request;
+}
+
 async function applyServerRecipe(server: Recipe, sequence: number): Promise<void> {
   const local = await db.recipes.get(server.id);
   const pending = (await db.outbox.where('entity_id').equals(server.id).toArray()).find((entry) => entry.type.startsWith('recipe-') && entry.status !== 'conflict');
@@ -233,7 +251,7 @@ async function applyServerRecipe(server: Recipe, sequence: number): Promise<void
   }
   if (!pending) await db.recipes.put({ ...server, local_version: local?.local_version ?? 0, sync_status: 'synced' });
   await db.syncMetadata.put({ key: 'change_cursor', value: sequence });
-  if (server.image_key) await cacheThumbnail(server.image_key);
+  if (server.image_key) await ensureThumbnailImage(server.image_key).catch(() => undefined);
 }
 
 async function pullChanges(): Promise<void> {

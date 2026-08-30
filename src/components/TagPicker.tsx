@@ -32,7 +32,7 @@ export function TagPicker({ value, suggestions, onChange }: { value: Tag[]; sugg
       {value.map((tag, index) => <span className="tag-chip" key={tag.id ?? `${tag.name}-${index}`}>{tag.name}<button type="button" aria-label={`Ta bort taggen ${tag.name}`} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><CloseIcon size={14} /></button></span>)}
       <input role="combobox" aria-label="Lägg till tagg" aria-expanded={open && matches.length > 0} aria-controls="tag-picker-options" autoComplete="off" maxLength={recipeLimits.tagName} disabled={value.length >= recipeLimits.tags} value={input} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onChange={(event) => { setInput(event.target.value); setOpen(true); }} onKeyDown={keyDown} placeholder={value.length >= recipeLimits.tags ? 'Max antal taggar' : value.length ? 'Lägg till…' : 'Skriv eller välj en tagg…'} />
     </div>
-    {open && matches.length > 0 && <div className="suggestion-list tag-suggestions" id="tag-picker-options" role="listbox">{matches.map((tag) => <button key={tag.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => add(tag)}>{tag.name}</button>)}</div>}
+    {open && matches.length > 0 && <div className="suggestion-list tag-suggestions" id="tag-picker-options" role="listbox">{matches.map((tag) => <button key={tag.id} type="button" role="option" onPointerDown={(event) => event.preventDefault()} onClick={() => add(tag)}>{tag.name}</button>)}</div>}
     <p className="field-help">Tryck Enter för att lägga till en ny tagg.</p>
   </div>;
 }

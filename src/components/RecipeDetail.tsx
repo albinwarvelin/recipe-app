@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router';
 import type { LocalRecipe } from '../data/db';
-import { useImageUrl } from '../hooks/useLocalData';
 import { ensureFullImage } from '../sync/coordinator';
 import { AppToolbar } from './AppToolbar';
 import { ArrowLeftIcon, EditIcon, TrashIcon } from './Icons';
+import { RecipeImage } from './RecipeImage';
 import { formatTimerDuration } from '../../shared/timer-duration';
 
 function safeWebUrl(value: string | null): string | null {
@@ -14,13 +14,13 @@ function safeWebUrl(value: string | null): string | null {
 }
 
 export function RecipeDetail({ recipe, backTo, onDelete }: { recipe: LocalRecipe; backTo: string; onDelete: () => void }) {
-  const imageUrl = useImageUrl(recipe.image_key, true);
   useEffect(() => { if (recipe.image_key && navigator.onLine) void ensureFullImage(recipe.image_key).catch(() => undefined); }, [recipe.image_key]);
   const minutes = (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0);
   const sourceUrl = safeWebUrl(recipe.source_url);
   return <div className="detail-page">
     <AppToolbar
       title="Recept"
+      hideTitleOnMobile
       leading={<Link className="nav-button" to={backTo}><ArrowLeftIcon /><span>Tillbaka</span></Link>}
       trailing={<>
         <Link className="nav-button" to={`/recipes/${recipe.id}/edit`}><EditIcon /><span className="nav-button-optional-label">Redigera</span></Link>
@@ -28,7 +28,7 @@ export function RecipeDetail({ recipe, backTo, onDelete }: { recipe: LocalRecipe
       </>}
     />
     <main className="detail-main page-container">
-      <div className={`detail-cover ${imageUrl ? 'has-image' : ''}`} style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined} />
+      {recipe.image_key && <div className="detail-cover"><RecipeImage imageId={recipe.image_key} full alt={`Omslagsbild för ${recipe.title}`} /></div>}
       <article className="detail-content">
         <p className="text-eyebrow">{recipe.source_type === 'personal' ? 'Från ditt kök' : recipe.source_name ?? recipe.source_type}</p>
         <h1 className="heading-1">{recipe.title}</h1>

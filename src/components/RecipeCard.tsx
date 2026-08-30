@@ -1,15 +1,14 @@
 import { Link } from 'react-router';
 import type { LocalRecipe } from '../data/db';
-import { useImageUrl } from '../hooks/useLocalData';
 import { StarIcon } from './Icons';
+import { RecipeImage } from './RecipeImage';
 
 export function RecipeCard({ recipe, to, onFavorite }: { recipe: LocalRecipe; to: string; onFavorite: () => void }) {
-  const imageUrl = useImageUrl(recipe.image_key);
   const minutes = (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0);
   return <article className="recipe-card">
     <Link className="recipe-card-open" to={to} aria-label={`Öppna ${recipe.title}`}>
-      <div className={`recipe-cover ${imageUrl ? 'has-image' : ''}`} style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined}>
-        {!imageUrl && <span aria-hidden="true">{recipe.title.slice(0, 1).toUpperCase()}</span>}
+      <div className="recipe-cover">
+        <RecipeImage imageId={recipe.image_key} alt="" fallback={<span aria-hidden="true">{recipe.title.slice(0, 1).toUpperCase()}</span>} />
         {recipe.sync_status !== 'synced' && <span className={`card-sync-state ${recipe.sync_status}`}>{recipe.sync_status === 'conflict' ? 'Behöver granskas' : recipe.sync_status === 'failed' ? 'Kräver åtgärd' : 'Väntar'}</span>}
       </div>
       <div className="recipe-card-body">

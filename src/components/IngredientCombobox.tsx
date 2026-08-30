@@ -53,7 +53,7 @@ export function IngredientCombobox({ value, catalog, index, onChange }: {
         const label = ingredientLabel(entry);
         const secondary = entry.names.find((name) => name.locale === 'en')?.display_name;
         return <button key={entry.id} type="button" role="option" aria-selected={value.catalog_id === entry.id}
-          onMouseDown={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.preventDefault()}
           onClick={() => { onChange({ name: label, catalog_id: entry.id }); setOpen(false); }}>
           <span>{label}</span>{secondary && normalizeSearchValue(secondary) !== normalizeSearchValue(label) && <small>{secondary}</small>}
         </button>;

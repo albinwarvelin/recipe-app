@@ -3,7 +3,7 @@ import type { Ingredient, Instruction, RecipeDraft } from '../api/recipes';
 import type { LocalIngredientCatalog, LocalRecipe, LocalTag } from '../data/db';
 import { draftFromLocalRecipe, type CoverChange } from '../data/local-recipes';
 import { validateRecipeDraft } from '../data/validate-recipe';
-import { useImageUrl } from '../hooks/useLocalData';
+import { useImageUrl } from '../images/use-image-url';
 import { prepareImportedCoverImage } from '../images/import';
 import { prepareCoverImage } from '../images/process';
 import { AppToolbar } from './AppToolbar';
