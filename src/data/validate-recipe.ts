@@ -1,5 +1,6 @@
 import type { RecipeDraft } from '../api/recipes';
 import { recipeDraftSchema } from '../../shared/recipe-validation';
+import { fieldPath, validationIssues } from '../../shared/validation-issues';
 
 const fieldNames: Record<string, string> = {
   title: 'Receptnamnet',
@@ -28,16 +29,6 @@ export class RecipeValidationError extends Error {
   }
 }
 
-function issueMessage(path: PropertyKey[], code: string): string {
-  const key = [...path].reverse().find((part) => typeof part === 'string') as string | undefined;
-  const field = key ? fieldNames[key] ?? 'Fältet' : 'Receptet';
-  if (code === 'too_small') return `${field} är tomt eller har ett för lågt värde.`;
-  if (code === 'too_big') return `${field} överskrider den tillåtna gränsen.`;
-  if (code === 'invalid_string' || code === 'invalid_format') return `${field} har ett ogiltigt format.`;
-  if (code === 'custom' && key === 'name' && path.includes('tags')) return 'Varje tagg måste vara unik.';
-  return `${field} innehåller ett ogiltigt värde.`;
-}
-
 export function validateRecipeDraft(draft: RecipeDraft): RecipeDraft {
   const parsed = recipeDraftSchema.safeParse(draft);
   if (parsed.success) {
@@ -60,6 +51,8 @@ export function validateRecipeDraft(draft: RecipeDraft): RecipeDraft {
       instructions: value.instructions.map((item) => ({ ...item, timer_seconds: item.timer_seconds ?? null })),
     };
   }
-  const issue = parsed.error.issues[0];
-  throw new RecipeValidationError(issueMessage(issue.path, issue.code));
+  throw new RecipeValidationError(validationIssues(parsed.error.issues).map((issue) => {
+    const key = [...issue.path].reverse().find((part) => typeof part === 'string') as string | undefined;
+    return `${key ? fieldNames[key] ?? 'Fältet' : 'Receptet'} (${fieldPath(issue.path)}): ${issue.message}`;
+  }).join('\n'));
 }

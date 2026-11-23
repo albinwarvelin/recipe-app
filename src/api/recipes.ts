@@ -54,12 +54,14 @@ export interface Recipe extends RecipeDraft {
   deleted_at: string | null;
 }
 
-interface ApiErrorBody {
-  error?: { code?: string; message?: string; requestId?: string; details?: { current?: Recipe } };
+export interface ApiErrorDetail {
+  code?: string; message?: string; requestId?: string;
+  details?: { current?: Recipe; issues?: import('../../shared/validation-issues').ValidationIssue[] };
 }
+interface ApiErrorBody { error?: ApiErrorDetail; }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly requestId?: string, public readonly current?: Recipe, public readonly code?: string) {
+  constructor(public readonly status: number, message: string, public readonly requestId?: string, public readonly current?: Recipe, public readonly code?: string, public readonly issues?: import('../../shared/validation-issues').ValidationIssue[]) {
     super(message);
     this.name = 'ApiError';
   }
@@ -69,7 +71,25 @@ export class AuthenticationRequiredError extends Error {
   constructor() { super('Du behöver logga in för att synkronisera.'); this.name = 'AuthenticationRequiredError'; }
 }
 
-function apiErrorMessage(status: number, code?: string): string {
+export function apiErrorMessage(status: number, code?: string): string {
+  if (!status && code?.startsWith('HTTP_')) status = Number(code.slice(5)) || 0;
+  const messages: Record<string, string> = {
+    INVALID_IMAGE: 'Bilden har ett format som servern inte kan läsa.',
+    INVALID_IMAGE_DIMENSIONS: 'Bildens storlek stämmer inte med den skickade filen. Välj bilden på nytt.',
+    UNSUPPORTED_IMAGE_TYPE: 'Bildformatet stöds inte. Välj JPEG, PNG, WebP, HEIC eller HEIF.',
+    IMAGE_NOT_FOUND: 'Omslagsbilden finns inte på servern. Välj bilden på nytt eller fortsätt utan bild.',
+    LOCAL_IMAGE_MISSING: 'Bilden saknas på enheten. Välj bilden på nytt eller fortsätt utan bild.',
+    REMOTE_IMAGE_UNAVAILABLE: 'Bildadressen kunde inte hämtas. Kontrollera att länken går direkt till en offentlig bild.',
+    REMOTE_IMAGE_TOO_LARGE: 'Bilden på webbadressen är större än 20 MB.',
+    UNSAFE_IMAGE_URL: 'Bildadressen är inte en tillåten offentlig http- eller https-adress.',
+    IDEMPOTENCY_KEY_REUSE: 'Servern har redan behandlat en annan ändring med samma identifierare. Ändringen behöver granskas.',
+    IMAGE_ID_REUSE: 'Bildens identifierare hör redan till en annan fil. Välj bilden på nytt.',
+    IMAGE_IN_USE: 'Bilden används fortfarande av ett recept.',
+    RECIPE_NOT_FOUND: 'Receptet i planeringen finns inte längre. Välj ett annat recept.',
+    NETWORK_ERROR: 'Servern kunde inte nås. Ändringen finns kvar på enheten.',
+    INVALID_RESPONSE: 'Servern skickade ett oväntat svar. Ändringen finns kvar på enheten och kan skickas igen.',
+  };
+  if (code && messages[code]) return messages[code];
   if (status === 401 || status === 403) return 'Du saknar behörighet för den här åtgärden.';
   if (status === 404) return 'Det som efterfrågades kunde inte hittas.';
   if (status === 409 || code === 'VERSION_CONFLICT') return 'Ändringen krockar med en nyare version och behöver granskas.';
@@ -91,9 +111,10 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
     const detail = body.error;
-    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId, detail?.details?.current, detail?.code);
+    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId ?? response.headers.get('X-Request-ID') ?? undefined, detail?.details?.current, detail?.code, detail?.details?.issues);
   }
-  return response.json() as Promise<T>;
+  try { return await response.json() as T; }
+  catch { throw new ApiError(502, apiErrorMessage(502, 'INVALID_RESPONSE'), response.headers.get('X-Request-ID') ?? undefined, undefined, 'INVALID_RESPONSE'); }
 }
 
 function writeInit(method: string, body: unknown): RequestInit {
@@ -144,13 +165,13 @@ export function getChanges(cursor: number): Promise<ChangePage> {
 
 export type SyncOperation =
   | { operation_id: string; type: 'create'; payload: RecipeDraft & { id: string } }
-  | { operation_id: string; type: 'update'; entity_id: string; payload: RecipeDraft & { base_version: number } }
+  | { operation_id: string; type: 'update'; entity_id: string; payload: Partial<RecipeDraft> & { base_version: number } }
   | { operation_id: string; type: 'delete'; entity_id: string; base_version: number };
 
 export interface SyncResult {
   operation_id: string;
   status: number;
-  body: { recipe?: Recipe; deleted?: boolean; error?: { code?: string; message?: string; details?: { current?: Recipe } } };
+  body: { recipe?: Recipe; deleted?: boolean; error?: ApiErrorDetail };
 }
 
 export async function pushOperations(operations: SyncOperation[]): Promise<SyncResult[]> {
@@ -209,7 +230,7 @@ export async function downloadImportedImage(url: string): Promise<Blob> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
     const detail = body.error;
-    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId, undefined, detail?.code);
+    throw new ApiError(response.status, apiErrorMessage(response.status, detail?.code), detail?.requestId, undefined, detail?.code, detail?.details?.issues);
   }
   const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() ?? '';
   if (!['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(contentType)) {

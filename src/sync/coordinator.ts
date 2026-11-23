@@ -1,15 +1,22 @@
 import { ApiError, AuthenticationRequiredError, downloadImage, getChanges, getIngredientCatalog, getTags, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
+import { getPlanningChanges, pushPlanningOperations, type PlanningSyncResult } from '../api/planning';
+import type { PlanningEntity, PlanningEntityType, PlanningOperation } from '../../shared/planning';
 import { normalizeIdentityValue } from '../data/normalize';
-import { db, type LocalRecipe, type OutboxOperation, type RecipeConflict } from '../data/db';
+import { db, type LocalManualShoppingItem, type LocalMealPlanEntry, type LocalRecipe, type LocalShoppingCheckState, type OutboxOperation, type PlanningOutboxOperation, type RecipeConflict } from '../data/db';
 import { sanitizeRecipeDraft } from '../data/local-recipes';
 import { thumbnailFromWebp } from '../images/process';
 import { canAttemptOperation, failureDispositionForStatus } from './failure-policy';
+import { createCoalescedRunner } from './coalesced-runner';
+import { deferRecipeCovers } from './deferred-covers';
+import { apiErrorMessage, type ApiErrorDetail } from '../api/recipes';
 
 export type SyncPhase = 'idle' | 'syncing' | 'offline' | 'auth-required' | 'error';
-export interface SyncSnapshot { phase: SyncPhase; pending: number; lastSync: string | null; message: string | null; }
+export interface SyncSnapshot {
+  phase: SyncPhase; pending: number; lastSync: string | null; message: string | null;
+  failure?: { status?: number; code?: string; requestId?: string; issues?: import('../../shared/validation-issues').ValidationIssue[] };
+}
 
 let snapshot: SyncSnapshot = { phase: navigator.onLine ? 'idle' : 'offline', pending: 0, lastSync: null, message: null };
-let activeSync: Promise<void> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const fullImageRequests = new Map<string, Promise<void>>();
 const thumbnailImageRequests = new Map<string, Promise<void>>();
@@ -33,14 +40,18 @@ export function subscribeSync(listener: (next: SyncSnapshot) => void): () => voi
 }
 
 async function updatePendingCount(): Promise<void> {
-  publish({ pending: await db.outbox.where('status').anyOf('pending', 'syncing', 'failed', 'conflict').count() });
+  const [recipePending, planningPending] = await Promise.all([
+    db.outbox.where('status').anyOf('pending', 'syncing', 'failed', 'conflict').count(),
+    db.planningOutbox.where('status').anyOf('pending', 'syncing', 'failed', 'conflict').count(),
+  ]);
+  publish({ pending: recipePending + planningPending });
 }
 
 async function scheduleNextRetry(): Promise<void> {
   if (retryTimer !== null) clearTimeout(retryTimer);
   retryTimer = null;
   if (!navigator.onLine) return;
-  const retryable = (await db.outbox.where('status').equals('failed').toArray())
+  const retryable = [...await db.outbox.where('status').equals('failed').toArray(), ...await db.planningOutbox.where('status').equals('failed').toArray()]
     .filter((entry) => entry.failure_kind !== 'permanent' && entry.next_attempt_at)
     .sort((left, right) => left.next_attempt_at!.localeCompare(right.next_attempt_at!));
   const next = retryable[0]?.next_attempt_at;
@@ -55,6 +66,7 @@ function recipeDraft(recipe: LocalRecipe): RecipeDraft {
 }
 
 function syncOperation(entry: OutboxOperation): SyncOperation {
+  if (entry.type === 'recipe-cover') return { operation_id: entry.operation_id, type: 'update', entity_id: entry.entity_id, payload: { image_key: entry.image_id, base_version: entry.base_server_version } };
   if (entry.type === 'recipe-create') return { operation_id: entry.operation_id, type: 'create', payload: { ...sanitizeRecipeDraft(entry.payload as RecipeDraft), id: entry.entity_id } };
   if (entry.type === 'recipe-update') return { operation_id: entry.operation_id, type: 'update', entity_id: entry.entity_id, payload: { ...sanitizeRecipeDraft(entry.payload as RecipeDraft), base_version: entry.base_server_version } };
   return { operation_id: entry.operation_id, type: 'delete', entity_id: entry.entity_id, base_version: entry.base_server_version };
@@ -65,12 +77,20 @@ function nextRetryAt(attemptCount: number): string {
   return new Date(Date.now() + delay).toISOString();
 }
 
-async function markFailed(entry: OutboxOperation, code: string, kind: 'transient' | 'permanent'): Promise<void> {
+function failureDetails(code: string, status?: number, detail?: ApiErrorDetail) {
+  return {
+    last_error_message: apiErrorMessage(status ?? 0, code), last_error_status: status ?? null,
+    last_request_id: detail?.requestId ?? null, last_error_issues: detail?.details?.issues ?? [],
+  };
+}
+
+async function markFailed(entry: OutboxOperation, code: string, kind: 'transient' | 'permanent', status?: number, detail?: ApiErrorDetail): Promise<void> {
   if (entry.sequence === undefined) return;
   await db.transaction('rw', db.outbox, db.recipes, async () => {
     await db.outbox.update(entry.sequence!, {
       status: 'failed',
       last_error_code: code,
+      ...failureDetails(code, status, detail),
       failure_kind: kind,
       next_attempt_at: kind === 'transient' ? nextRetryAt(entry.attempt_count + 1) : null,
     });
@@ -115,7 +135,7 @@ async function acknowledgeRecipe(entry: OutboxOperation, result: SyncResult): Pr
   });
 }
 
-async function recordConflict(entry: OutboxOperation, server: Recipe | null): Promise<void> {
+async function recordConflict(entry: OutboxOperation, server: Recipe | null, detail?: ApiErrorDetail): Promise<void> {
   const local = await db.recipes.get(entry.entity_id);
   if (!local || entry.sequence === undefined) return;
   const conflict: RecipeConflict = {
@@ -126,18 +146,38 @@ async function recordConflict(entry: OutboxOperation, server: Recipe | null): Pr
   await db.transaction('rw', db.recipes, db.outbox, db.conflicts, async () => {
     await db.conflicts.put(conflict);
     await db.recipes.update(entry.entity_id, { sync_status: 'conflict' });
-    await db.outbox.update(entry.sequence!, { status: 'conflict', last_error_code: 'VERSION_CONFLICT' });
+    await db.outbox.update(entry.sequence!, { status: 'conflict', last_error_code: 'VERSION_CONFLICT', ...failureDetails('VERSION_CONFLICT', 409, detail) });
   });
 }
 
 async function processEntry(entry: OutboxOperation): Promise<boolean> {
   if (entry.sequence === undefined) return true;
-  await db.outbox.update(entry.sequence, { status: 'syncing', last_attempt_at: new Date().toISOString(), attempt_count: entry.attempt_count + 1, failure_kind: null, next_attempt_at: null });
+  // Claim the latest queued payload in the same transaction that marks it as
+  // in flight. An edit between queue selection and sending must not be lost.
+  const claimed = await db.transaction('rw', db.outbox, db.recipes, db.images, async () => {
+    let latest = await db.outbox.get(entry.sequence!);
+    if (!latest || !canAttemptOperation(latest)) return null;
+    if (latest.depends_on && await db.outbox.where('operation_id').equals(latest.depends_on).count()) return null;
+    if (!latest.attempt_count && latest.payload?.image_key && latest.type !== 'recipe-cover') {
+      const image = await db.images.get(latest.payload.image_key);
+      if (!image?.remote && await db.outbox.where('entity_id').equals(latest.payload.image_key).filter((item) => item.type === 'image-upload').count()) return null;
+    }
+    if (latest.type === 'recipe-cover' && !latest.payload) {
+      const local = await db.recipes.get(latest.entity_id);
+      if (!local || local.deleted_at || local.image_key !== latest.image_id) { await db.outbox.delete(latest.sequence!); return null; }
+      latest = { ...latest, payload: recipeDraft(local), base_server_version: local.version, local_version: local.local_version };
+    }
+    await db.outbox.put({ ...latest, status: 'syncing', last_attempt_at: new Date().toISOString(), attempt_count: latest.attempt_count + 1, failure_kind: null, next_attempt_at: null });
+    return latest;
+  });
+  if (!claimed) return true;
+  entry = claimed;
   try {
     if (entry.type === 'image-upload') {
       const image = await db.images.get(entry.entity_id);
       if (!image?.full_blob) { await markFailed(entry, 'LOCAL_IMAGE_MISSING', 'permanent'); return true; }
-      await uploadImage(image.id, image.full_blob, image.width, image.height, entry.operation_id);
+      const uploaded = await uploadImage(image.id, image.full_blob, image.width, image.height, entry.operation_id);
+      if (uploaded?.id !== image.id) throw new ApiError(502, apiErrorMessage(502, 'INVALID_RESPONSE'), undefined, undefined, 'INVALID_RESPONSE');
       await db.transaction('rw', db.images, db.outbox, async () => {
         await db.images.update(image.id, { remote: true });
         await db.outbox.delete(entry.sequence!);
@@ -156,13 +196,15 @@ async function processEntry(entry: OutboxOperation): Promise<boolean> {
       return true;
     }
     const [result] = await pushOperations([syncOperation(entry)]);
+    if (!result || result.operation_id !== entry.operation_id || !Number.isInteger(result.status) || !result.body) throw new ApiError(502, apiErrorMessage(502, 'INVALID_RESPONSE'), undefined, undefined, 'INVALID_RESPONSE');
+    if (result.status >= 200 && result.status < 300 && (entry.type === 'recipe-delete' ? !result.body.deleted : result.body.recipe?.id !== entry.entity_id || !Number.isInteger(result.body.recipe.version))) throw new ApiError(502, apiErrorMessage(502, 'INVALID_RESPONSE'), undefined, undefined, 'INVALID_RESPONSE');
     if (result.status >= 200 && result.status < 300) { await acknowledgeRecipe(entry, result); return true; }
     if (result.status === 409 && result.body.error?.code === 'VERSION_CONFLICT') {
-      await recordConflict(entry, result.body.error.details?.current ?? null);
+      await recordConflict(entry, result.body.error.details?.current ?? null, result.body.error);
       return true;
     }
     const kind = failureDispositionForStatus(result.status);
-    await markFailed(entry, result.body.error?.code ?? `HTTP_${result.status}`, kind);
+    await markFailed(entry, result.body.error?.code ?? `HTTP_${result.status}`, kind, result.status, result.body.error);
     return kind === 'permanent';
   } catch (cause) {
     if (cause instanceof AuthenticationRequiredError || (cause instanceof ApiError && (cause.status === 401 || cause.status === 403))) {
@@ -178,7 +220,10 @@ async function processEntry(entry: OutboxOperation): Promise<boolean> {
       return true;
     }
     const kind = cause instanceof ApiError ? failureDispositionForStatus(cause.status) : 'transient';
-    await markFailed(entry, cause instanceof ApiError ? cause.code ?? `HTTP_${cause.status}` : 'NETWORK_ERROR', kind);
+    await markFailed(entry, cause instanceof ApiError ? cause.code ?? `HTTP_${cause.status}` : 'NETWORK_ERROR', kind,
+      cause instanceof ApiError ? cause.status : undefined,
+      cause instanceof ApiError ? { requestId: cause.requestId, details: { issues: cause.issues } } : undefined);
+    if (entry.type === 'image-upload') return true;
     if (kind === 'permanent') return true;
     throw cause;
   }
@@ -187,12 +232,105 @@ async function processEntry(entry: OutboxOperation): Promise<boolean> {
 async function processOutbox(): Promise<void> {
   await db.outbox.where('status').equals('syncing').modify({ status: 'pending' });
   while (true) {
+    await deferRecipeCovers();
     const all = await db.outbox.orderBy('sequence').toArray();
     const ids = new Set(all.map((entry) => entry.operation_id));
     const timestamp = new Date().toISOString();
-    const next = all.find((entry) => canAttemptOperation(entry, timestamp) && (!entry.depends_on || !ids.has(entry.depends_on)));
+    // Recipe text gets a durable server copy before optional cover work.
+    const ordered = [...all.filter((entry) => entry.type === 'recipe-create' || entry.type === 'recipe-update' || entry.type === 'recipe-delete'), ...all.filter((entry) => !['recipe-create', 'recipe-update', 'recipe-delete'].includes(entry.type))];
+    const next = ordered.find((entry) => canAttemptOperation(entry, timestamp)
+      && (!entry.depends_on || !ids.has(entry.depends_on))
+      && (entry.type !== 'recipe-cover' || !all.some((other) => other.entity_id === entry.entity_id && other.operation_id !== entry.operation_id
+        && other.depends_on !== entry.operation_id && other.type.startsWith('recipe-') && (other.type !== 'recipe-cover' || other.sequence! < entry.sequence!))));
     if (!next) return;
     const continued = await processEntry(next);
+    await updatePendingCount();
+    if (!continued) return;
+  }
+}
+
+function planningEntityType(type: PlanningOutboxOperation['type']): PlanningEntityType {
+  if (type === 'meal-plan-put') return 'meal-plan';
+  if (type === 'manual-item-put') return 'manual-item';
+  return 'check-state';
+}
+
+function planningOperation(entry: PlanningOutboxOperation): PlanningOperation {
+  if (entry.type === 'meal-plan-put') return { operation_id: entry.operation_id, type: entry.type, payload: entry.payload as Extract<PlanningOperation, { type: 'meal-plan-put' }>['payload'] };
+  if (entry.type === 'manual-item-put') return { operation_id: entry.operation_id, type: entry.type, payload: entry.payload as Extract<PlanningOperation, { type: 'manual-item-put' }>['payload'] };
+  return { operation_id: entry.operation_id, type: entry.type, payload: entry.payload as Extract<PlanningOperation, { type: 'check-state-put' }>['payload'] };
+}
+
+async function getLocalPlanningEntity(type: PlanningEntityType, id: string): Promise<LocalMealPlanEntry | LocalManualShoppingItem | LocalShoppingCheckState | undefined> {
+  if (type === 'meal-plan') return db.mealPlanEntries.get(id);
+  if (type === 'manual-item') return db.manualShoppingItems.get(id);
+  return db.shoppingCheckStates.get(id);
+}
+
+async function putLocalPlanningEntity(type: PlanningEntityType, entity: PlanningEntity, localVersion: number, syncStatus: 'synced' | 'pending'): Promise<void> {
+  if (type === 'meal-plan') await db.mealPlanEntries.put({ ...entity, local_version: localVersion, sync_status: syncStatus } as LocalMealPlanEntry);
+  else if (type === 'manual-item') await db.manualShoppingItems.put({ ...entity, local_version: localVersion, sync_status: syncStatus } as LocalManualShoppingItem);
+  else await db.shoppingCheckStates.put({ ...entity, local_version: localVersion, sync_status: syncStatus } as LocalShoppingCheckState);
+}
+
+async function updateLocalPlanningEntity(type: PlanningEntityType, id: string, patch: Record<string, unknown>): Promise<void> {
+  if (type === 'meal-plan') await db.mealPlanEntries.update(id, patch);
+  else if (type === 'manual-item') await db.manualShoppingItems.update(id, patch);
+  else await db.shoppingCheckStates.update(id, patch);
+}
+
+async function markPlanningFailed(entry: PlanningOutboxOperation, code: string, kind: 'transient' | 'permanent', status?: number, detail?: ApiErrorDetail): Promise<void> {
+  if (entry.sequence === undefined) return;
+  await db.planningOutbox.update(entry.sequence, {
+    status: 'failed', last_error_code: code, failure_kind: kind,
+    ...failureDetails(code, status, detail),
+    next_attempt_at: kind === 'transient' ? nextRetryAt(entry.attempt_count + 1) : null,
+  });
+  if (kind === 'permanent') await updateLocalPlanningEntity(planningEntityType(entry.type), entry.entity_id, { sync_status: 'failed' });
+}
+
+async function acknowledgePlanning(entry: PlanningOutboxOperation, result: PlanningSyncResult): Promise<void> {
+  if (entry.sequence === undefined || !result.body.entity || !result.body.entity_type) return;
+  const type = result.body.entity_type;
+  const server = result.body.entity;
+  const current = await getLocalPlanningEntity(type, entry.entity_id);
+  await db.planningOutbox.delete(entry.sequence);
+  if (!current) return;
+  const remaining = (await db.planningOutbox.where('entity_id').equals(entry.entity_id).toArray()).length > 0;
+  if (current.local_version <= entry.local_version && !remaining) await putLocalPlanningEntity(type, server, current.local_version, 'synced');
+  else await updateLocalPlanningEntity(type, current.id, { version: server.version, sync_status: remaining ? 'pending' : current.sync_status });
+}
+
+async function processPlanningEntry(entry: PlanningOutboxOperation): Promise<boolean> {
+  if (entry.sequence === undefined) return true;
+  await db.planningOutbox.update(entry.sequence, { status: 'syncing', last_attempt_at: new Date().toISOString(), attempt_count: entry.attempt_count + 1, failure_kind: null, next_attempt_at: null });
+  try {
+    const [result] = await pushPlanningOperations([planningOperation(entry)]);
+    if (result.status >= 200 && result.status < 300 && result.body.entity) { await acknowledgePlanning(entry, result); return true; }
+    const kind = failureDispositionForStatus(result.status);
+    await markPlanningFailed(entry, result.body.error?.code ?? `HTTP_${result.status}`, kind, result.status, result.body.error);
+    return kind === 'permanent';
+  } catch (cause) {
+    if (cause instanceof AuthenticationRequiredError || (cause instanceof ApiError && (cause.status === 401 || cause.status === 403))) {
+      await db.planningOutbox.update(entry.sequence, { status: 'pending', last_error_code: 'AUTH_REQUIRED', failure_kind: null, next_attempt_at: null });
+      throw new AuthenticationRequiredError();
+    }
+    const kind = cause instanceof ApiError ? failureDispositionForStatus(cause.status) : 'transient';
+    await markPlanningFailed(entry, cause instanceof ApiError ? cause.code ?? `HTTP_${cause.status}` : 'NETWORK_ERROR', kind,
+      cause instanceof ApiError ? cause.status : undefined,
+      cause instanceof ApiError ? { requestId: cause.requestId, details: { issues: cause.issues } } : undefined);
+    if (kind === 'permanent') return true;
+    throw cause;
+  }
+}
+
+async function processPlanningOutbox(): Promise<void> {
+  await db.planningOutbox.where('status').equals('syncing').modify({ status: 'pending' });
+  while (true) {
+    const timestamp = new Date().toISOString();
+    const next = (await db.planningOutbox.orderBy('sequence').toArray()).find((entry) => canAttemptOperation(entry, timestamp));
+    if (!next) return;
+    const continued = await processPlanningEntry(next);
     await updatePendingCount();
     if (!continued) return;
   }
@@ -244,12 +382,18 @@ export function ensureFullImage(imageId: string): Promise<void> {
 
 async function applyServerRecipe(server: Recipe, sequence: number): Promise<void> {
   const local = await db.recipes.get(server.id);
-  const pending = (await db.outbox.where('entity_id').equals(server.id).toArray()).find((entry) => entry.type.startsWith('recipe-') && entry.status !== 'conflict');
+  const operations = await db.outbox.where('entity_id').equals(server.id).toArray();
+  const cover = operations.find((entry) => entry.type === 'recipe-cover');
+  const pending = operations.find((entry) => entry.type.startsWith('recipe-') && entry.type !== 'recipe-cover' && entry.status !== 'conflict');
   if (pending && server.version > pending.base_server_version) {
     await recordConflict(pending, server);
     return;
   }
-  if (!pending) await db.recipes.put({ ...server, local_version: local?.local_version ?? 0, sync_status: 'synced' });
+  if (!pending) {
+    if (cover && local && server.deleted_at) { await recordConflict(cover, server); return; }
+    await db.recipes.put({ ...server, image_key: cover && local ? local.image_key : server.image_key,
+      local_version: local?.local_version ?? 0, sync_status: cover ? local?.sync_status ?? 'pending' : 'synced' });
+  }
   await db.syncMetadata.put({ key: 'change_cursor', value: sequence });
   if (server.image_key) await ensureThumbnailImage(server.image_key).catch(() => undefined);
 }
@@ -275,6 +419,32 @@ async function pullChanges(): Promise<void> {
   }
 }
 
+async function applyPlanningChange(type: PlanningEntityType, entity: PlanningEntity): Promise<void> {
+  const pending = (await db.planningOutbox.where('entity_id').equals(entity.id).toArray()).length > 0;
+  if (pending) return;
+  const local = await getLocalPlanningEntity(type, entity.id);
+  await putLocalPlanningEntity(type, entity, local?.local_version ?? 0, 'synced');
+}
+
+async function pullPlanningChanges(): Promise<void> {
+  let cursor = Number((await db.syncMetadata.get('planning_change_cursor'))?.value ?? 0);
+  while (true) {
+    const page = await getPlanningChanges(cursor);
+    for (const change of page.changes) {
+      if (change.entity) await applyPlanningChange(change.entity_type, change.entity);
+      else {
+        const pending = (await db.planningOutbox.where('entity_id').equals(change.entity_id).toArray()).length > 0;
+        const local = await getLocalPlanningEntity(change.entity_type, change.entity_id);
+        if (!pending && local) await updateLocalPlanningEntity(change.entity_type, change.entity_id, { version: change.version, deleted_at: change.changed_at, updated_at: change.changed_at, sync_status: 'synced' });
+      }
+      await db.syncMetadata.put({ key: 'planning_change_cursor', value: change.sequence });
+    }
+    cursor = page.next_cursor;
+    await db.syncMetadata.put({ key: 'planning_change_cursor', value: cursor });
+    if (!page.has_more) return;
+  }
+}
+
 async function refreshReferenceData(): Promise<void> {
   const [catalog, tags] = await Promise.all([getIngredientCatalog(), getTags()]);
   const pendingOperations = (await db.outbox.toArray()).filter((entry) => entry.type.startsWith('recipe-'));
@@ -295,33 +465,39 @@ async function refreshReferenceData(): Promise<void> {
 }
 
 async function runSync(): Promise<void> {
-  await updatePendingCount();
-  if (!navigator.onLine) { publish({ phase: 'offline', message: null }); return; }
-  publish({ phase: 'syncing', message: null });
   try {
+    await updatePendingCount();
+    if (!navigator.onLine) { publish({ phase: 'offline', message: null, failure: undefined }); return; }
+    publish({ phase: 'syncing', message: null, failure: undefined });
     await processOutbox();
+    await processPlanningOutbox();
     await pullChanges();
+    await pullPlanningChanges();
     await refreshReferenceData();
-    const lastSync = new Date().toISOString();
-    await db.syncMetadata.put({ key: 'last_successful_sync', value: lastSync });
-    const failures = await db.outbox.where('status').equals('failed').toArray();
-    if (failures.some((entry) => entry.failure_kind === 'permanent')) publish({ phase: 'error', lastSync, message: 'En eller flera ändringar kräver åtgärd.' });
-    else if (failures.length) publish({ phase: 'error', lastSync, message: 'Synkroniseringen avbröts tillfälligt och försöker igen senare.' });
-    else publish({ phase: 'idle', lastSync, message: null });
+    const failures = [...await db.outbox.where('status').equals('failed').toArray(), ...await db.planningOutbox.where('status').equals('failed').toArray()];
+    const conflicts = await db.outbox.where('status').equals('conflict').count();
+    if (failures.some((entry) => entry.failure_kind === 'permanent')) publish({ phase: 'error', message: 'En eller flera ändringar kräver åtgärd.' });
+    else if (failures.length) publish({ phase: 'error', message: 'Synkroniseringen avbröts tillfälligt och försöker igen senare.' });
+    else if (conflicts) publish({ phase: 'error', message: 'En ändring krockar med serverns version och behöver granskas.' });
+    else {
+      const lastSync = new Date().toISOString();
+      await db.syncMetadata.put({ key: 'last_successful_sync', value: lastSync });
+      publish({ phase: 'idle', lastSync, message: null });
+    }
   } catch (cause) {
     if (cause instanceof AuthenticationRequiredError) publish({ phase: 'auth-required', message: 'Logga in för att synkronisera väntande ändringar.' });
     else if (!navigator.onLine) publish({ phase: 'offline', message: null });
-    else publish({ phase: 'error', message: cause instanceof Error ? cause.message : 'Synkroniseringen misslyckades.' });
+    else publish({ phase: 'error', message: cause instanceof ApiError ? cause.message : cause instanceof TypeError ? apiErrorMessage(0, 'NETWORK_ERROR') : 'Synkroniseringen kunde inte slutföras. Kontrollera enhetens lagring och försök igen.',
+      failure: cause instanceof ApiError ? { status: cause.status, code: cause.code, requestId: cause.requestId, issues: cause.issues } : { code: cause instanceof Error ? cause.name : 'UNKNOWN_ERROR' } });
   } finally {
-    await updatePendingCount();
-    await scheduleNextRetry();
+    try { await updatePendingCount(); await scheduleNextRetry(); }
+    catch { publish({ phase: 'error', message: 'Synkstatus kunde inte läsas från enhetens lagring. Läs in sidan igen.' }); }
   }
 }
 
-export function syncNow(): Promise<void> {
-  if (!activeSync) activeSync = runSync().finally(() => { activeSync = null; });
-  return activeSync;
-}
+const runCoalescedSync = createCoalescedRunner(runSync);
+
+export function syncNow(): Promise<void> { return runCoalescedSync(); }
 
 export function installSyncTriggers(): () => void {
   const online = () => void syncNow();

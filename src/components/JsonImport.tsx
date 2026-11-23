@@ -8,6 +8,7 @@ import {
   parseRecipeImport,
   RECIPE_IMPORT_AI_INSTRUCTION,
 } from '../../shared/recipe-import';
+import type { ImportNotice } from '../../shared/normalize-import';
 import { AppToolbar } from './AppToolbar';
 import { CheckIcon, CloseIcon } from './Icons';
 import { RecipeEditor } from './RecipeEditor';
@@ -24,6 +25,7 @@ export function JsonImport({ catalog, tags, onCancel, onSave }: {
   const [draft, setDraft] = useState<RecipeDraft | null>(null);
   const [initialCover, setInitialCover] = useState<CoverChange>({ kind: 'keep' });
   const [editorMessage, setEditorMessage] = useState<string | null>(null);
+  const [notices, setNotices] = useState<ImportNotice[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<CopyState>('idle');
   const [importing, setImporting] = useState(false);
@@ -56,6 +58,7 @@ export function JsonImport({ catalog, tags, onCancel, onSave }: {
       }
       setInitialCover(cover);
       setEditorMessage(notice);
+      setNotices(imported.notices);
       setDraft(imported.draft);
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'JSON-receptet kunde inte importeras.');
@@ -70,6 +73,7 @@ export function JsonImport({ catalog, tags, onCancel, onSave }: {
       initialDraft={draft}
       initialCover={initialCover}
       initialMessage={editorMessage}
+      importNotices={notices}
       title="Granska importerat recept"
       catalog={catalog}
       tags={tags}
@@ -104,7 +108,7 @@ export function JsonImport({ catalog, tags, onCancel, onSave }: {
         <label className="form-field">
           <span className="field-label">JSON-recept</span>
           <textarea required autoFocus rows={16} maxLength={MAX_RECIPE_IMPORT_CHARACTERS} spellCheck={false} value={jsonInput} onChange={(event) => setJsonInput(event.target.value)} placeholder={'{\n  "format": "recipe-app",\n  "version": 1,\n  "recipe": { ... }\n}'} />
-          <span className="field-help">Endast JSON enligt receptmallen accepteras. Ett omgivande JSON-kodblock tas bort automatiskt.</span>
+          <span className="field-help">Kodblock och vanliga JSON-fel kan rättas automatiskt. Anpassningar visas när du granskar receptet.</span>
         </label>
         {message && <p className="error-message" role="alert">{message}</p>}
         <button className="primary-button import-submit" type="submit" disabled={importing}>{importing ? 'Förbereder import…' : 'Öppna i redigeraren'}</button>

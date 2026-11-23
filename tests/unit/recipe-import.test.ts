@@ -49,16 +49,15 @@ describe('recipe JSON import', () => {
     expect(draft).toMatchObject({ title: '', servings: null, ingredients: [], instructions: [], tags: [] });
   });
 
-  it('rejects online imports without a source URL', () => {
-    expect(() => parseRecipeImport('{"format":"recipe-app","version":1,"recipe":{"source_type":"online"}}'))
-      .toThrow('webbsida');
+  it('opens online imports with missing attribution for correction in the editor', () => {
+    expect(parseRecipeImport('{"format":"recipe-app","version":1,"recipe":{"source_type":"online"}}').notices)
+      .toContainEqual(expect.objectContaining({ path: 'recipe.source_url' }));
   });
 
-  it('rejects unknown fields instead of silently discarding them', () => {
-    expect(() => parseRecipeImport('{"format":"recipe-app","version":1,"recipe":{"photo_url":"https://example.com/image.jpg"}}'))
-      .toThrow(RecipeImportError);
-    expect(() => parseRecipeImport('{"format":"recipe-app","version":1,"recipe":{"photo_url":"https://example.com/image.jpg"}}'))
-      .toThrow('photo_url');
+  it('recognizes aliases and reports extra fields instead of blocking the import', () => {
+    const parsed = parseRecipeImport('{"format":"recipe-app","version":1,"recipe":{"photo_url":"https://example.com/image.jpg","extra":true}}');
+    expect(parsed.imageUrl).toBe('https://example.com/image.jpg');
+    expect(parsed.notices).toContainEqual(expect.objectContaining({ path: 'recipe.extra' }));
   });
 
   it('documents estimated preparation, cooking, step times, and a separate image URL', () => {

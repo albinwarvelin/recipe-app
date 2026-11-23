@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import worker from '../../worker/index';
+import { applySecurityHeaders } from '../../worker/middleware/security';
 
 const env = {
   ASSETS: {} as Fetcher,
@@ -15,6 +16,12 @@ const env = {
 } satisfies Env;
 
 describe('API security boundary', () => {
+  it('permits local WASM image codecs while keeping evaluated JavaScript blocked', () => {
+    const policy = applySecurityHeaders(new Response()).headers.get('Content-Security-Policy')!;
+    expect(policy).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(policy).not.toContain("'unsafe-eval'");
+    expect(policy).not.toContain("'unsafe-inline'");
+  });
   it('rejects an unauthenticated API request', async () => {
     const response = await worker.fetch(new Request('https://recipes.example/api/session'), env);
     expect(response.status).toBe(401);
@@ -22,6 +29,11 @@ describe('API security boundary', () => {
 
   it('does not allow unknown API routes anonymously', async () => {
     const response = await worker.fetch(new Request('https://recipes.example/api/recipes'), env);
+    expect(response.status).toBe(401);
+  });
+
+  it('protects planning data with the same authentication boundary', async () => {
+    const response = await worker.fetch(new Request('https://recipes.example/api/planning/changes'), env);
     expect(response.status).toBe(401);
   });
 

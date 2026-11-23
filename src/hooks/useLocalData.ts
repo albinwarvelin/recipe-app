@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { useEffect, useState } from 'react';
-import { db, type LocalIngredientCatalog, type LocalRecipe, type LocalTag, type RecipeConflict } from '../data/db';
+import { db, type LocalIngredientCatalog, type LocalManualShoppingItem, type LocalMealPlanEntry, type LocalRecipe, type LocalShoppingCheckState, type LocalTag, type RecipeConflict } from '../data/db';
 import { subscribeSync, syncSnapshot, type SyncSnapshot } from '../sync/coordinator';
 
 export type LocalQueryState<T> =
@@ -20,6 +20,19 @@ export function useRecipes(): LocalQueryState<LocalRecipe[]> {
       });
     return () => subscription.unsubscribe();
   }, []);
+  return state;
+}
+
+export function useLocalRecipe(id: string | undefined): LocalQueryState<LocalRecipe | undefined> {
+  const [state, setState] = useState<LocalQueryState<LocalRecipe | undefined>>({ status: 'loading', data: undefined });
+  useEffect(() => {
+    setState({ status: 'loading', data: undefined });
+    const subscription = liveQuery(async () => id ? await db.recipes.get(id) : undefined).subscribe({
+      next: (recipe) => setState({ status: 'ready', data: recipe?.deleted_at ? undefined : recipe }),
+      error: (error) => setState({ status: 'error', data: undefined, error }),
+    });
+    return () => subscription.unsubscribe();
+  }, [id]);
   return state;
 }
 
@@ -60,4 +73,34 @@ export function useSyncState(): SyncSnapshot {
   const [state, setState] = useState(syncSnapshot);
   useEffect(() => subscribeSync(setState), []);
   return state;
+}
+
+export function useMealPlanEntries(): LocalMealPlanEntry[] {
+  const [entries, setEntries] = useState<LocalMealPlanEntry[]>([]);
+  useEffect(() => {
+    const subscription = liveQuery(() => db.mealPlanEntries.orderBy('planned_date').toArray())
+      .subscribe({ next: (items) => setEntries(items.filter((item) => !item.deleted_at).sort((left, right) => left.planned_date.localeCompare(right.planned_date) || left.position - right.position)), error: (error) => console.error(error) });
+    return () => subscription.unsubscribe();
+  }, []);
+  return entries;
+}
+
+export function useManualShoppingItems(): LocalManualShoppingItem[] {
+  const [items, setItems] = useState<LocalManualShoppingItem[]>([]);
+  useEffect(() => {
+    const subscription = liveQuery(() => db.manualShoppingItems.orderBy('week_start').toArray())
+      .subscribe({ next: (entries) => setItems(entries.filter((item) => !item.deleted_at)), error: (error) => console.error(error) });
+    return () => subscription.unsubscribe();
+  }, []);
+  return items;
+}
+
+export function useShoppingCheckStates(): LocalShoppingCheckState[] {
+  const [states, setStates] = useState<LocalShoppingCheckState[]>([]);
+  useEffect(() => {
+    const subscription = liveQuery(() => db.shoppingCheckStates.toArray())
+      .subscribe({ next: (entries) => setStates(entries.filter((item) => !item.deleted_at)), error: (error) => console.error(error) });
+    return () => subscription.unsubscribe();
+  }, []);
+  return states;
 }

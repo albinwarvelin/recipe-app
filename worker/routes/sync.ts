@@ -3,6 +3,7 @@ import { imageReferenceExists } from '../data/images';
 import { error, json, MAX_SYNC_JSON_BYTES, readJson } from '../http';
 import { changesQuerySchema, syncRequestSchema } from '../validation/recipes';
 import { mutationResponse } from './recipes';
+import { validationIssues } from '../../shared/validation-issues';
 
 export async function syncRoute(request: Request, env: Env, id: string): Promise<Response> {
   const url = new URL(request.url);
@@ -22,7 +23,7 @@ export async function syncRoute(request: Request, env: Env, id: string): Promise
   const body = await readJson(request, id, MAX_SYNC_JSON_BYTES);
   if (body instanceof Response) return body;
   const parsed = syncRequestSchema.safeParse(body);
-  if (!parsed.success) return error('VALIDATION_ERROR', 'The sync operations could not be accepted.', 422, id, parsed.error.flatten());
+  if (!parsed.success) return error('VALIDATION_ERROR', 'The sync operations could not be accepted.', 422, id, { issues: validationIssues(parsed.error.issues) });
 
   const results: unknown[] = [];
   for (const operation of parsed.data.operations) {

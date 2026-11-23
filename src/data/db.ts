@@ -1,10 +1,11 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { IngredientCatalogEntry, Recipe, RecipeDraft } from '../api/recipes';
+import type { ManualShoppingItem, MealPlanEntry, PlanningOperation, ShoppingCheckState } from '../../shared/planning';
 
 export type LocalSyncStatus = 'synced' | 'pending' | 'failed' | 'conflict';
 export type OutboxStatus = 'pending' | 'syncing' | 'failed' | 'conflict';
 export type OutboxFailureKind = 'transient' | 'permanent';
-export type OutboxType = 'recipe-create' | 'recipe-update' | 'recipe-delete' | 'image-upload' | 'image-delete';
+export type OutboxType = 'recipe-create' | 'recipe-update' | 'recipe-delete' | 'recipe-cover' | 'image-upload' | 'image-delete';
 
 export interface LocalRecipe extends Recipe {
   local_version: number;
@@ -29,6 +30,7 @@ export interface OutboxOperation {
   entity_id: string;
   type: OutboxType;
   payload?: RecipeDraft & { id?: string; base_version?: number };
+  image_id?: string;
   created_at: string;
   last_attempt_at: string | null;
   attempt_count: number;
@@ -36,6 +38,10 @@ export interface OutboxOperation {
   local_version: number;
   status: OutboxStatus;
   last_error_code: string | null;
+  last_error_message?: string | null;
+  last_error_status?: number | null;
+  last_request_id?: string | null;
+  last_error_issues?: import('../../shared/validation-issues').ValidationIssue[];
   failure_kind?: OutboxFailureKind | null;
   next_attempt_at?: string | null;
   depends_on: string | null;
@@ -58,6 +64,41 @@ export interface RecipeConflict {
   created_at: string;
 }
 
+export interface LocalMealPlanEntry extends MealPlanEntry {
+  local_version: number;
+  sync_status: LocalSyncStatus;
+}
+
+export interface LocalManualShoppingItem extends ManualShoppingItem {
+  local_version: number;
+  sync_status: LocalSyncStatus;
+}
+
+export interface LocalShoppingCheckState extends ShoppingCheckState {
+  local_version: number;
+  sync_status: LocalSyncStatus;
+}
+
+export interface PlanningOutboxOperation {
+  sequence?: number;
+  operation_id: string;
+  entity_id: string;
+  type: PlanningOperation['type'];
+  payload: PlanningOperation['payload'];
+  created_at: string;
+  last_attempt_at: string | null;
+  attempt_count: number;
+  local_version: number;
+  status: OutboxStatus;
+  last_error_code: string | null;
+  last_error_message?: string | null;
+  last_error_status?: number | null;
+  last_request_id?: string | null;
+  last_error_issues?: import('../../shared/validation-issues').ValidationIssue[];
+  failure_kind?: OutboxFailureKind | null;
+  next_attempt_at?: string | null;
+}
+
 class RecipeDatabase extends Dexie {
   recipes!: EntityTable<LocalRecipe, 'id'>;
   images!: EntityTable<LocalImage, 'id'>;
@@ -66,6 +107,10 @@ class RecipeDatabase extends Dexie {
   syncMetadata!: EntityTable<SyncMetadata, 'key'>;
   conflicts!: EntityTable<RecipeConflict, 'id'>;
   ingredientCatalog!: EntityTable<LocalIngredientCatalog, 'id'>;
+  mealPlanEntries!: EntityTable<LocalMealPlanEntry, 'id'>;
+  manualShoppingItems!: EntityTable<LocalManualShoppingItem, 'id'>;
+  shoppingCheckStates!: EntityTable<LocalShoppingCheckState, 'id'>;
+  planningOutbox!: EntityTable<PlanningOutboxOperation, 'sequence'>;
 
   constructor() {
     super('recipe-app');
@@ -86,13 +131,19 @@ class RecipeDatabase extends Dexie {
     this.version(3).stores({
       ingredientCatalog: '&id, category',
     });
+    this.version(4).stores({
+      mealPlanEntries: '&id, planned_date, recipe_id, updated_at, sync_status',
+      manualShoppingItems: '&id, week_start, updated_at, sync_status',
+      shoppingCheckStates: '&id, week_start, item_key, updated_at, sync_status',
+      planningOutbox: '++sequence, &operation_id, entity_id, type, status, created_at',
+    });
   }
 }
 
 export const db = new RecipeDatabase();
 
 export async function clearLocalData(): Promise<void> {
-  await db.transaction('rw', [db.recipes, db.images, db.outbox, db.tags, db.syncMetadata, db.conflicts, db.ingredientCatalog], async () => {
-    await Promise.all([db.recipes.clear(), db.images.clear(), db.outbox.clear(), db.tags.clear(), db.syncMetadata.clear(), db.conflicts.clear(), db.ingredientCatalog.clear()]);
+  await db.transaction('rw', [db.recipes, db.images, db.outbox, db.tags, db.syncMetadata, db.conflicts, db.ingredientCatalog, db.mealPlanEntries, db.manualShoppingItems, db.shoppingCheckStates, db.planningOutbox], async () => {
+    await Promise.all([db.recipes.clear(), db.images.clear(), db.outbox.clear(), db.tags.clear(), db.syncMetadata.clear(), db.conflicts.clear(), db.ingredientCatalog.clear(), db.mealPlanEntries.clear(), db.manualShoppingItems.clear(), db.shoppingCheckStates.clear(), db.planningOutbox.clear()]);
   });
 }

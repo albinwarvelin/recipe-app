@@ -111,7 +111,7 @@ function operation(type: OutboxOperation['type'], entityId: string, timestamp: s
 
 async function pendingRecipeOperation(recipeId: string): Promise<OutboxOperation | undefined> {
   const entries = await db.outbox.where('entity_id').equals(recipeId).toArray();
-  return entries.reverse().find((entry) => entry.type.startsWith('recipe-') && (entry.status === 'pending' || entry.status === 'failed'));
+  return entries.reverse().find((entry) => entry.type !== 'recipe-cover' && entry.type.startsWith('recipe-') && (entry.status === 'pending' || entry.status === 'failed'));
 }
 
 export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: RecipeDraft, cover: CoverChange): Promise<LocalRecipe> {
@@ -144,7 +144,7 @@ export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: Re
 
     const pending = await pendingRecipeOperation(recipeId);
     let recipeOperation: OutboxOperation;
-    if (pending && pending.status !== 'syncing') {
+    if (pending && (pending.attempt_count === 0 || pending.failure_kind === 'permanent')) {
       const nextDependency = uploadOperation?.operation_id ?? (cover.kind === 'remove' ? null : pending.depends_on);
       if (pending.depends_on && pending.depends_on !== nextDependency) {
         const obsoleteDependency = await db.outbox.where('operation_id').equals(pending.depends_on).first();
@@ -154,25 +154,43 @@ export async function saveLocalRecipe(existing: LocalRecipe | null, rawDraft: Re
       }
       recipeOperation = {
         ...pending,
+        operation_id: pending.attempt_count ? crypto.randomUUID() : pending.operation_id,
         type: pending.type === 'recipe-create' ? 'recipe-create' : 'recipe-update',
         payload: { ...draft, ...(pending.type === 'recipe-create' ? { id: recipeId } : { base_version: pending.base_server_version }) },
         local_version: localVersion, status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null,
+        last_error_message: null, last_error_status: null, last_request_id: null, last_error_issues: [],
         depends_on: nextDependency,
       };
+      if (recipeOperation.operation_id !== pending.operation_id) await db.outbox.where('depends_on').equals(pending.operation_id).modify({ depends_on: recipeOperation.operation_id });
       await db.outbox.put(recipeOperation);
     } else {
+      const prior = (await db.outbox.where('entity_id').equals(recipeId).toArray()).reverse().find((item) => item.type.startsWith('recipe-') && item.type !== 'recipe-cover');
       recipeOperation = operation(
         existing ? 'recipe-update' : 'recipe-create', recipeId, timestamp, localVersion, existing?.version ?? 0,
         { ...draft, ...(existing ? { base_version: existing.version } : { id: recipeId }) },
-        uploadOperation?.operation_id,
+        prior?.operation_id ?? uploadOperation?.operation_id,
       );
-      await db.outbox.add(recipeOperation);
+      recipeOperation.sequence = await db.outbox.add(recipeOperation);
+    }
+
+    // Cancel only attachments that have never been sent. In-flight payloads
+    // stay intact; a later recipe write corrects any acknowledged older cover.
+    const covers = (await db.outbox.where('entity_id').equals(recipeId).toArray()).filter((item) => item.type === 'recipe-cover');
+    for (const attachment of covers) {
+      if (attachment.image_id !== imageId && (!attachment.attempt_count || attachment.failure_kind === 'permanent')) await db.outbox.delete(attachment.sequence!);
+      else if (attachment.attempt_count && attachment.status !== 'conflict' && attachment.failure_kind !== 'permanent') {
+        await db.outbox.update(recipeOperation.sequence!, { depends_on: attachment.operation_id });
+      }
     }
 
     if (priorImageId && priorImageId !== imageId) {
       await db.outbox.add(operation('image-delete', priorImageId, timestamp, localVersion, 0, undefined, recipeOperation.operation_id));
     }
     await db.recipes.put(local);
+    if (priorImageId && priorImageId !== imageId) {
+      const stillUsed = (await db.recipes.toArray()).some((item) => !item.deleted_at && item.image_key === priorImageId);
+      if (!stillUsed) await db.outbox.where('entity_id').equals(priorImageId).filter((item) => item.type === 'image-upload' && item.status !== 'syncing').delete();
+    }
     await refreshTags();
   });
   return local;
@@ -186,9 +204,10 @@ export async function deleteLocalRecipe(recipe: LocalRecipe): Promise<void> {
   const timestamp = now();
   await db.transaction('rw', db.recipes, db.images, db.outbox, db.tags, async () => {
     const pending = await pendingRecipeOperation(recipe.id);
-    if (recipe.version === 0 && pending?.type === 'recipe-create' && pending.status !== 'syncing') {
+    if (recipe.version === 0 && pending?.type === 'recipe-create' && (pending.attempt_count === 0 || pending.failure_kind === 'permanent')) {
       const operations = await db.outbox.where('entity_id').equals(recipe.id).toArray();
       if (pending.sequence !== undefined) await db.outbox.delete(pending.sequence);
+      await db.outbox.where('entity_id').equals(recipe.id).filter((item) => item.type === 'recipe-cover').delete();
       if (recipe.image_key) {
         const imageOperations = await db.outbox.where('entity_id').equals(recipe.image_key).toArray();
         await db.outbox.bulkDelete(imageOperations.flatMap((item) => item.sequence === undefined ? [] : [item.sequence]));
@@ -199,8 +218,9 @@ export async function deleteLocalRecipe(recipe: LocalRecipe): Promise<void> {
     } else {
       const localVersion = recipe.local_version + 1;
       let deleteOperation: OutboxOperation;
-      if (pending && pending.status !== 'syncing') {
-        deleteOperation = { ...pending, type: 'recipe-delete', payload: undefined, local_version: localVersion, status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null };
+      if (pending && (pending.attempt_count === 0 || pending.failure_kind === 'permanent')) {
+        deleteOperation = { ...pending, operation_id: pending.attempt_count ? crypto.randomUUID() : pending.operation_id, type: 'recipe-delete', payload: undefined, local_version: localVersion, status: 'pending', last_error_code: null, failure_kind: null, next_attempt_at: null };
+        if (deleteOperation.operation_id !== pending.operation_id) await db.outbox.where('depends_on').equals(pending.operation_id).modify({ depends_on: deleteOperation.operation_id });
         await db.outbox.put(deleteOperation);
       } else {
         deleteOperation = operation('recipe-delete', recipe.id, timestamp, localVersion, recipe.version, undefined, pending?.operation_id);

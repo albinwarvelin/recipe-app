@@ -7,6 +7,7 @@ import { importImageRoute } from './routes/import-image';
 import { syncRoute } from './routes/sync';
 import { tagRoute } from './routes/tags';
 import { ingredientRoute } from './routes/ingredients';
+import { planningRoute } from './routes/planning';
 
 async function handleRequest(request: Request, env: Env, id: string): Promise<Response> {
   const origin = allowedOrigin(request, env);
@@ -50,6 +51,8 @@ async function handleRequest(request: Request, env: Env, id: string): Promise<Re
     response = await tagRoute(request, env, id);
   } else if (url.pathname === '/api/ingredients') {
     response = await ingredientRoute(request, env, id);
+  } else if (url.pathname === '/api/planning/sync' || url.pathname === '/api/planning/changes') {
+    response = await planningRoute(request, env, id);
   } else if (url.pathname === '/api/import/image') {
     if (request.method !== 'POST') {
       response = await importImageRoute(request, env, id);

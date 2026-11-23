@@ -22,13 +22,17 @@ export default defineConfig({
         icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
       },
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,svg,webmanifest,wasm}'],
         // The lazy HEIC decoder is intentionally cached so Apple photo imports
         // still work after the PWA has been opened once and then goes offline.
+        // Include the Safari WebP encoder and its WASM binaries for the same reason.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024
       }
     })
   ],
+  // Keep the codec's relative WASM URLs intact during development.
+  optimizeDeps: { exclude: ['@jsquash/webp'] },
+  worker: { format: 'es' },
   server: {
     port: 5173
   }

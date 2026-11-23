@@ -1,0 +1,17 @@
+# Recipe import and sync recovery
+
+JSON import extracts one recipe, repairs common syntax mistakes with `jsonrepair`, normalizes clear type variations and selected field aliases, and validates the result. The review screen lists changes and omitted extra fields. Ambiguous numbers, conflicting aliases, multiple recipes, unsupported versions, truncated values, and limits still produce field-specific errors. Imported recipe text remains plain text. API validation and image URL security remain strict.
+
+Recipes and their durable outbox entries save in one IndexedDB transaction. New local images no longer block recipe text from reaching the server: the first recipe write omits an unavailable cover, and a separate version-checked cover update attaches it after upload. The local recipe retains its cover while waiting. Existing unsent image-dependent writes are upgraded during sync. Requests that may have reached the server keep their original operation ID and payload; later edits are queued separately.
+
+Tap the sync indicator or **Visa fel och åtgärder** to see failed actions, affected recipes, field errors, HTTP status, error code, and request ID where available. Retry explicitly retries the selected failed operation, including failures excluded from automatic retries. Recipes can be edited, images replaced, or **Fortsätt utan bild** selected. Old failures retain whatever diagnostics were originally stored; retry captures the current response.
+
+The UI distinguishes a committed local save from server sync. Storage read failures have a visible error, and recipe detail reads its record directly instead of relying only on the library subscription having updated after navigation.
+
+Rejected weekly-plan changes can be repaired directly in the sync dialog, including entries hidden by an invalid or empty date. Choose a valid date and **Spara datum och synka**, or use **Ta bort planeringen** to queue a valid deletion for that meal alone. The recipe is retained. Invalid dates are rejected before new local planning writes; clearing the planner's date input no longer queues an empty date.
+
+Safari can display WebP but does not support canvas WebP encoding: `toBlob('image/webp')` returns PNG. This previously rejected imports and also prevented downloaded covers from reaching IndexedDB when thumbnail generation failed. Upload preparation now falls back to an on-device WebAssembly WebP encoder in a short-lived background worker. Local thumbnails use JPEG, independently of the upload format. The encoder JavaScript and WASM are included in the offline shell manifest. CSP permits WebAssembly compilation with `wasm-unsafe-eval` while evaluated JavaScript remains blocked. Existing remote WebP covers need no conversion or database migration; missing thumbnails are generated when recipes sync or cards load.
+
+Regression coverage uses synthetic recipe data and includes syntax/type recovery, invalid URLs, Safari-style PNG fallback during WebP encoding, downloaded thumbnail/full-image caching without native WebP encoding, worker cleanup, image rejection, temporary failures, explicit retry, cover removal, text edits during a failed upload, lost acknowledgements, durable reopening, and structured Worker validation errors. Run `npm test` and `npm run build`.
+
+The original disappearance on the production computer has not been reproduced in that browser. Browser storage/network inspection and a manual UI check remain necessary to establish its precise cause. Do not clear that device's local data to troubleshoot unsynchronized recipes.

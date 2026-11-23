@@ -24,7 +24,7 @@ export const recipeLimits = {
 const nullableShortText = z.string().trim().max(recipeLimits.sourceName).nullable().optional();
 const nullableNonNegativeInteger = z.number().int().min(0).max(recipeLimits.minutes).nullable().optional();
 const nullableWebUrl = z.string().url().max(recipeLimits.sourceUrl)
-  .refine((value) => ['http:', 'https:'].includes(new URL(value).protocol), 'Only http and https source URLs are accepted.')
+  .refine((value) => { try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; } }, 'Only http and https source URLs are accepted.')
   .nullable().optional();
 
 export const ingredientSchema = z.object({

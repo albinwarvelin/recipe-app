@@ -12,6 +12,7 @@ import { IngredientCombobox } from './IngredientCombobox';
 import { TagPicker } from './TagPicker';
 import { recipeLimits } from '../../shared/recipe-validation';
 import { timerDurationParts, timerDurationSeconds } from '../../shared/timer-duration';
+import type { ImportNotice } from '../../shared/normalize-import';
 
 export const emptyRecipeDraft: RecipeDraft = {
   title: '', description: '', servings: null, prep_minutes: null, cook_minutes: null,
@@ -21,11 +22,12 @@ export const emptyRecipeDraft: RecipeDraft = {
 
 function optionalNumber(value: string): number | null { return value === '' ? null : Number(value); }
 
-export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessage, title, catalog, tags, allowCoverChanges = true, onCancel, onSave }: {
+export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessage, importNotices = [], title, catalog, tags, allowCoverChanges = true, onCancel, onSave }: {
   recipe: LocalRecipe | null;
   initialDraft?: RecipeDraft;
   initialCover?: CoverChange;
   initialMessage?: string | null;
+  importNotices?: ImportNotice[];
   title?: string;
   catalog: LocalIngredientCatalog[];
   tags: LocalTag[];
@@ -78,7 +80,12 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setMessage(null);
     try { await onSave(validateRecipeDraft(draft), cover); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Receptet kunde inte sparas lokalt.'); setSaving(false); }
+    catch (cause) {
+      const name = cause instanceof Error ? cause.name : '';
+      setMessage(name === 'QuotaExceededError' ? 'Receptet kunde inte sparas: enhetens lagringsutrymme är fullt. Ta bort den valda bilden och försök igen. Dina inmatade uppgifter finns kvar här.'
+        : `Receptet kunde inte sparas på enheten. ${cause instanceof Error ? cause.message : 'Försök igen.'}`);
+      setSaving(false);
+    }
   }
 
   const coverUrl = cover.kind === 'remove' ? null : preview ?? existingImage;
@@ -99,6 +106,8 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
       leading={<button className="nav-button" type="button" onClick={onCancel}><CloseIcon /><span>Avbryt</span></button>}
       trailing={<button className="nav-button nav-button-primary" form="recipe-form" disabled={saving || processing}><CheckIcon /><span>{saving ? 'Sparar…' : 'Spara'}</span></button>}
     />
+    {message && <div className="page-container editor-feedback" role="alert"><p className="error-message">{message}</p></div>}
+    {importNotices.length > 0 && <details className="page-container import-notices"><summary>{importNotices.length} anpassningar gjordes vid importen – granska dem</summary><ul>{importNotices.map((notice, index) => <li key={index}><strong>{notice.path}:</strong> {notice.message}</li>)}</ul></details>}
     <form id="recipe-form" className="editor-layout page-container" onSubmit={(event) => void submit(event)}>
       <aside className="cover-editor">
         <section className="cover-card">
@@ -186,7 +195,7 @@ export function RecipeEditor({ recipe, initialDraft, initialCover, initialMessag
           <label className="form-field"><span className="field-label">Anteckningar</span><textarea rows={5} maxLength={10000} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="Byten, påminnelser eller serveringsförslag" /></label>
           <label className="switch-row"><span><strong className="text-label">Favorit</strong><small>Visa receptet bland dina favoriter.</small></span><input type="checkbox" checked={draft.favorite} onChange={(event) => setDraft({ ...draft, favorite: event.target.checked })} /></label>
         </section>
-        {message && <p className="error-message" role="alert">{message}</p>}
+        {message && <p className="error-message">{message}</p>}
         <button className="primary-button editor-save" disabled={saving || processing}><CheckIcon />{saving ? 'Sparar lokalt…' : 'Spara recept'}</button>
       </div>
     </form>

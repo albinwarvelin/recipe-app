@@ -24,4 +24,9 @@ describe('recipe normalization and validation', () => {
     expect(() => validateRecipeDraft({ ...draft, title: '' })).toThrow(RecipeValidationError);
     expect(() => validateRecipeDraft({ ...draft, title: '' })).toThrow('Receptnamnet');
   });
+
+  it('reports an invalid URL and the exact ingredient field without throwing URL exceptions', () => {
+    expect(() => validateRecipeDraft({ ...draft, source_url: '' })).toThrow(RecipeValidationError);
+    expect(() => validateRecipeDraft({ ...draft, ingredients: [{ name: '', amount: null, unit: null, group_name: null }] })).toThrow('ingredients[1].name');
+  });
 });

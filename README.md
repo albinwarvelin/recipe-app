@@ -4,7 +4,7 @@ Private, single-user, local-first recipe PWA on Cloudflare Workers, D1, and R2.
 
 ## Current status
 
-The app has a card-based responsive frontend, dedicated recipe views/editors, Dexie persistence, durable local-first writes, dependency-aware synchronization, manual conflict resolution, and an Access-aware offline shell. Cover photos support JPEG, PNG, WebP, HEIC, and HEIF input; the browser strips metadata and stores normalized WebP in a private EU-jurisdiction R2 bucket.
+The app has a card-based responsive frontend, dedicated recipe views/editors, Dexie persistence, durable local-first writes, dependency-aware synchronization, manual conflict resolution, and an Access-aware offline shell. Cover photos support JPEG, PNG, WebP, HEIC, and HEIF input; the browser strips metadata and stores normalized WebP in a private EU-jurisdiction R2 bucket. Safari uses an on-device WebAssembly encoder in a background worker when native canvas WebP encoding is unavailable. Local thumbnails use JPEG so downloaded covers can be displayed without a WebP encoder.
 
 Cloudflare Access protects the complete `workers.dev` deployment with email one-time PIN login, and the Worker independently validates every API request before reading D1 or R2. Once opened successfully, cached recipes and thumbnails remain usable offline. Unsynchronized writes are never discarded after retry or authentication failure.
 

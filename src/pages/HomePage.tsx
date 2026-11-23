@@ -2,20 +2,26 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
+import { BottomTabBar } from '../components/BottomTabBar';
 import { ConflictResolution } from '../components/ConflictResolution';
 import { ingredientLabel } from '../components/IngredientCombobox';
 import { JsonImport } from '../components/JsonImport';
+import { PlanRecipeSheet } from '../components/PlanRecipeSheet';
 import { CheckIcon, ChevronDownIcon, CloseIcon, MoreIcon, PlusIcon, SearchIcon, StarIcon } from '../components/Icons';
 import { RecipeCard } from '../components/RecipeCard';
 import { RecipeDetail } from '../components/RecipeDetail';
 import { RecipeEditor } from '../components/RecipeEditor';
 import { SettingsView } from '../components/SettingsView';
 import { SyncIndicator } from '../components/SyncIndicator';
+import { SyncProblems } from '../components/SyncProblems';
 import { matchingTags } from '../components/TagPicker';
 import type { LocalIngredientCatalog, LocalRecipe, LocalTag, RecipeConflict } from '../data/db';
+import { addMealPlanEntry } from '../data/local-planning';
 import { deleteLocalRecipe, saveLocalRecipe, setLocalFavorite, type CoverChange } from '../data/local-recipes';
 import { normalizeSearchValue } from '../data/normalize';
-import { useConflicts, useIngredientCatalog, useRecipes, useSyncState, useTags, type LocalQueryState } from '../hooks/useLocalData';
+import { useConflicts, useIngredientCatalog, useManualShoppingItems, useMealPlanEntries, useLocalRecipe, useRecipes, useShoppingCheckStates, useSyncState, useTags, type LocalQueryState } from '../hooks/useLocalData';
+import { PlannerPage } from './PlannerPage';
+import { ShoppingPage } from './ShoppingPage';
 import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServer, syncNow } from '../sync/coordinator';
 
 type MatchMode = 'any' | 'all';
@@ -98,6 +104,7 @@ function setValues(params: URLSearchParams, key: string, values: string[]): URLS
 
 function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalRecipe[]; recipesStatus: LocalQueryState<LocalRecipe[]>['status']; catalog: LocalIngredientCatalog[]; tags: LocalTag[] }) {
   const sync = useSyncState();
+  const [showSyncProblems, setShowSyncProblems] = useState(false);
   const pullSync = usePullToSync(sync.phase === 'syncing');
   const [params, setParams] = useSearchParams();
   const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
@@ -198,15 +205,17 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
     <header className="navigation-bar">
       <div className="navigation-bar-inner page-container">
         <div className="library-title"><p className="text-eyebrow">Privat kök</p><h1 className="heading-1">Recept</h1></div>
-        <div className="header-actions"><SyncIndicator state={sync} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut</a></div>}</div></div>
+        <div className="header-actions"><SyncIndicator state={sync} onClick={() => setShowSyncProblems(true)} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut</a></div>}</div></div>
       </div>
     </header>
     <div className={`pull-sync${pullSync.active ? ' is-active' : ''}${pullSync.ready ? ' is-ready' : ''}`} style={{ height: `${pullSync.distance}px` }} aria-hidden="true">
       <span className="pull-sync-dot" />
       <span>{pullSync.ready ? 'Släpp för att synkronisera' : 'Dra för att synkronisera'}</span>
     </div>
+    {showSyncProblems && <SyncProblems state={sync} onClose={() => setShowSyncProblems(false)} />}
     <main className="library-content page-container">
-      {(sync.phase === 'offline' || sync.phase === 'auth-required' || sync.phase === 'error') && <div className={`offline-banner ${sync.phase}`}><span>{sync.phase === 'offline' ? 'Offline — ändringar sparas på den här enheten.' : sync.message ?? 'Synkronisering är inte tillgänglig.'}</span>{sync.phase === 'auth-required' && <button type="button" onClick={() => window.location.assign('/')}>Logga in</button>}{sync.phase === 'error' && <button type="button" onClick={() => void syncNow()}>Försök igen</button>}</div>}
+      {recipesStatus === 'error' && <div className="offline-banner error" role="alert">Receptbiblioteket kunde inte läsas från enheten. Sparade recept kan därför saknas i listan.<button type="button" onClick={() => window.location.reload()}>Läs in igen</button></div>}
+      {(sync.phase === 'offline' || sync.phase === 'auth-required' || sync.phase === 'error') && <div className={`offline-banner ${sync.phase}`}><span>{sync.phase === 'offline' ? 'Offline — ändringar sparas på den här enheten.' : sync.message ?? 'Synkronisering är inte tillgänglig.'}</span>{sync.phase === 'auth-required' && <button type="button" onClick={() => window.location.assign('/')}>Logga in</button>}{sync.phase === 'error' && <button type="button" onClick={() => setShowSyncProblems(true)}>Visa fel och åtgärder</button>}</div>}
       <section className="library-controls">
         <label className="search-field"><SearchIcon /><input type="search" value={query} onChange={(event) => updateParam('q', event.target.value)} placeholder="Sök bland recept, ingredienser och taggar" aria-label="Sök recept" /></label>
         <div className="filter-toolbar">
@@ -257,9 +266,21 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
 
 function DetailRoute({ recipesState, onDelete }: { recipesState: LocalQueryState<LocalRecipe[]>; onDelete: (recipe: LocalRecipe) => Promise<void> }) {
   const { recipeId } = useParams();
-  const recipe = recipesState.data.find((entry) => entry.id === recipeId);
-  if (!recipe) return <div className="route-message page-container"><h1 className="heading-1">{recipesState.status === 'loading' ? 'Receptet hämtas…' : 'Receptet finns inte på enheten'}</h1><p className="text-body-muted">{recipesState.status === 'loading' ? 'Det lokala offlinebiblioteket läses in.' : 'Det kan ha tagits bort eller ännu inte ha synkroniserats hit.'}</p><Link to="/">Till recepten</Link></div>;
-  return <RecipeDetail recipe={recipe} backTo="/" onDelete={() => void onDelete(recipe)} />;
+  const [params] = useSearchParams();
+  const [planning, setPlanning] = useState(false);
+  const savedState = useLocation().state as { savedLocally?: boolean } | null;
+  const directRecipe = useLocalRecipe(recipeId);
+  const recipe = directRecipe.data ?? recipesState.data.find((entry) => entry.id === recipeId);
+  if (!recipe) return <div className="route-message page-container"><h1 className="heading-1">{directRecipe.status === 'loading' ? 'Receptet hämtas…' : directRecipe.status === 'error' ? 'Receptet kunde inte läsas' : 'Receptet finns inte på enheten'}</h1><p className="text-body-muted">{directRecipe.status === 'loading' ? 'Det sparade receptet läses från enheten.' : directRecipe.status === 'error' ? 'Ett fel uppstod i enhetens lagring. Försök läsa in sidan igen.' : 'Det kan ha tagits bort eller ännu inte ha synkroniserats hit.'}</p><Link to="/">Till recepten</Link></div>;
+  const requestedBack = params.get('back');
+  const backTo = requestedBack?.startsWith('/plan') || requestedBack?.startsWith('/shopping') ? requestedBack : '/';
+  const initialWeek = new URLSearchParams(backTo.split('?')[1] ?? '').get('week') ?? undefined;
+  const add = async (date: string) => {
+    await addMealPlanEntry(recipe.id, date, recipe.servings);
+    setPlanning(false);
+    void syncNow();
+  };
+  return <>{savedState?.savedLocally && <p className="saved-notice page-container" role="status">Sparat på enheten.{recipe.sync_status !== 'synced' ? ' Synkronisering sker separat.' : ' Synkroniserat.'}</p>}<RecipeDetail recipe={recipe} backTo={backTo} onDelete={() => void onDelete(recipe)} onPlan={() => setPlanning(true)} />{planning && <PlanRecipeSheet recipe={recipe} initialWeek={initialWeek} onAdd={(date) => void add(date)} onClose={() => setPlanning(false)} />}</>;
 }
 
 function EditorRoute({ recipesState, catalog, tags, conflictsState }: { recipesState: LocalQueryState<LocalRecipe[]>; catalog: LocalIngredientCatalog[]; tags: LocalTag[]; conflictsState: LocalQueryState<RecipeConflict[]> }) {
@@ -274,7 +295,7 @@ function EditorRoute({ recipesState, catalog, tags, conflictsState }: { recipesS
   }
   async function save(draft: RecipeDraft, cover: CoverChange) {
     const saved = await saveLocalRecipe(recipe, draft, cover);
-    navigate(`/recipes/${saved.id}`, { replace: true });
+    navigate(`/recipes/${saved.id}`, { replace: true, state: { savedLocally: true } });
     void syncNow();
   }
   return <RecipeEditor recipe={recipe} catalog={catalog} tags={tags} onCancel={() => navigate(recipe ? `/recipes/${recipe.id}` : '/')} onSave={save} />;
@@ -284,7 +305,7 @@ function ImportRoute({ catalog, tags }: { catalog: LocalIngredientCatalog[]; tag
   const navigate = useNavigate();
   async function save(draft: RecipeDraft, cover: CoverChange) {
     const saved = await saveLocalRecipe(null, draft, cover);
-    navigate(`/recipes/${saved.id}`, { replace: true });
+    navigate(`/recipes/${saved.id}`, { replace: true, state: { savedLocally: true } });
     void syncNow();
   }
   return <JsonImport catalog={catalog} tags={tags} onCancel={() => navigate('/')} onSave={save} />;
@@ -313,6 +334,9 @@ export function HomePage({ email }: { email?: string }) {
   const conflicts = conflictsState.data;
   const catalog = useIngredientCatalog();
   const tags = useTags();
+  const mealPlanEntries = useMealPlanEntries();
+  const manualShoppingItems = useManualShoppingItems();
+  const shoppingCheckStates = useShoppingCheckStates();
   const sync = useSyncState();
   const navigate = useNavigate();
   const location = useLocation();
@@ -332,9 +356,12 @@ export function HomePage({ email }: { email?: string }) {
   }
 
   const resolvingConflict = /^\/recipes\/[^/]+\/conflict$/.test(location.pathname);
+  const showBottomTabs = location.pathname === '/' || location.pathname === '/plan' || location.pathname === '/shopping';
   const dialog = !resolvingConflict && conflicts[0] && <ConflictDialog conflict={conflicts[0]} onKeepLocal={() => void keepLocal(conflicts[0])} onKeepServer={() => void keepServer(conflicts[0])} onMerge={() => navigate(`/recipes/${conflicts[0].entity_id}/conflict`)} />;
   return <><RouteScrollReset /><Routes>
     <Route path="/" element={<Library recipes={recipes} recipesStatus={recipesState.status} catalog={catalog} tags={tags} />} />
+    <Route path="/plan" element={<PlannerPage recipes={recipes} entries={mealPlanEntries} />} />
+    <Route path="/shopping" element={<ShoppingPage recipes={recipes} entries={mealPlanEntries} catalog={catalog} manualItems={manualShoppingItems} checkStates={shoppingCheckStates} />} />
     <Route path="/recipes/new" element={<EditorRoute recipesState={recipesState} catalog={catalog} tags={tags} conflictsState={conflictsState} />} />
     <Route path="/recipes/import" element={<ImportRoute catalog={catalog} tags={tags} />} />
     <Route path="/recipes/:recipeId" element={<DetailRoute recipesState={recipesState} onDelete={remove} />} />
@@ -342,5 +369,5 @@ export function HomePage({ email }: { email?: string }) {
     <Route path="/recipes/:recipeId/conflict" element={<ConflictRoute conflictsState={conflictsState} catalog={catalog} tags={tags} />} />
     <Route path="/settings" element={<SettingsView email={email} sync={sync} onBack={() => navigate('/')} onCleared={() => navigate('/')} />} />
     <Route path="*" element={<Navigate to="/" replace />} />
-  </Routes>{dialog}</>;
+  </Routes>{showBottomTabs && <BottomTabBar />}{dialog}</>;
 }

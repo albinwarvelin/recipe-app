@@ -68,3 +68,23 @@ export function ImageIcon({ size = 28, className }: IconProps) {
     <path d="m5 17 4.5-4 3 2.5 2.5-2 4 3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
   </svg>;
 }
+
+export function BookIcon({ size = 22, className }: IconProps) {
+  return <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M4.5 5.5A2.5 2.5 0 0 1 7 3h5v16H7a2.5 2.5 0 0 0-2.5 2V5.5Zm15 0A2.5 2.5 0 0 0 17 3h-5v16h5a2.5 2.5 0 0 1 2.5 2V5.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>;
+}
+
+export function CalendarIcon({ size = 22, className }: IconProps) {
+  return <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" strokeWidth="1.7" />
+    <path d="M7.5 3v4M16.5 3v4M3.5 9.5h17" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+  </svg>;
+}
+
+export function CartIcon({ size = 22, className }: IconProps) {
+  return <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M3.5 4.5h2l1.8 9.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.5L20.5 8H6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="9.5" cy="19" r="1.25" fill="currentColor" /><circle cx="17" cy="19" r="1.25" fill="currentColor" />
+  </svg>;
+}
