@@ -9,23 +9,23 @@ type CachedEntry = CachedSource & { references: number; lastUsed: number };
 const MAX_CACHED_URLS = 80;
 const cachedUrls = new Map<string, CachedEntry>();
 
-function cacheKey(imageId: string, variant: ImageVariant): string {
-  return `${imageId}:${variant}`;
+function cacheKey(image: LocalImage, variant: ImageVariant, blob: Blob): string {
+  return `${image.id}:${variant}:${image.last_accessed_at}:${blob.type}:${blob.size}`;
 }
 
 function sourceForImage(image: LocalImage | undefined, full: boolean): { key: string; blob: Blob } | null {
-  if (!image?.thumbnail_blob) return null;
-  if (full && image.full_blob) return { key: cacheKey(image.id, 'full'), blob: image.full_blob };
-  return { key: cacheKey(image.id, 'thumbnail'), blob: image.thumbnail_blob };
+  if (!image) return null;
+  if (full && image.full_blob) return { key: cacheKey(image, 'full', image.full_blob), blob: image.full_blob };
+  return image.thumbnail_blob ? { key: cacheKey(image, 'thumbnail', image.thumbnail_blob), blob: image.thumbnail_blob } : null;
 }
 
 function cachedSource(imageId: string, full: boolean): CachedSource | null {
   const candidates = full
-    ? [cacheKey(imageId, 'full'), cacheKey(imageId, 'thumbnail')]
-    : [cacheKey(imageId, 'thumbnail')];
-  for (const key of candidates) {
-    const cached = cachedUrls.get(key);
-    if (cached) return { key, url: cached.url };
+    ? [`${imageId}:full:`, `${imageId}:thumbnail:`]
+    : [`${imageId}:thumbnail:`];
+  for (const prefix of candidates) {
+    const cached = [...cachedUrls.values()].filter((entry) => entry.key.startsWith(prefix)).sort((a, b) => b.lastUsed - a.lastUsed)[0];
+    if (cached) return { key: cached.key, url: cached.url };
   }
   return null;
 }
@@ -92,7 +92,7 @@ export function useImageUrl(imageId: string | null | undefined, full = false): s
           setSource(null);
           return;
         }
-        if (full && activeKey === cacheKey(imageId, 'full') && next.key === cacheKey(imageId, 'thumbnail')) return;
+        if (full && activeKey?.startsWith(`${imageId}:full:`) && next.key.startsWith(`${imageId}:thumbnail:`)) return;
         if (activeKey === next.key) return;
         const acquired = acquireSource(next.key, next.blob);
         if (!acquired) return;

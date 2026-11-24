@@ -49,7 +49,7 @@ describe('local-first recipe repository', () => {
   it('detaches a failed image upload when the cover is removed', async () => {
     const imageId = crypto.randomUUID();
     const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Missing cover' }, {
-      kind: 'replace', image: { id: imageId, full: new Blob(['full'], { type: 'image/webp' }), thumbnail: new Blob(['thumb'], { type: 'image/webp' }), width: 1200, height: 800 },
+      kind: 'replace', image: { id: imageId, full: new Blob(['full'], { type: 'image/jpeg' }), thumbnail: new Blob(['thumb'], { type: 'image/jpeg' }), width: 1200, height: 800 },
     });
     const upload = await db.outbox.where('type').equals('image-upload').first();
     await db.outbox.update(upload!.sequence!, { status: 'failed', failure_kind: 'permanent', last_error_code: 'LOCAL_IMAGE_MISSING' });
@@ -74,7 +74,7 @@ describe('local-first recipe repository', () => {
   it('orders an offline cover upload before the recipe that references it', async () => {
     const imageId = crypto.randomUUID();
     const recipe = await saveLocalRecipe(null, { ...emptyRecipeDraft, title: 'Photographed pie' }, {
-      kind: 'replace', image: { id: imageId, full: new Blob(['full'], { type: 'image/webp' }), thumbnail: new Blob(['thumb'], { type: 'image/webp' }), width: 1200, height: 800 },
+      kind: 'replace', image: { id: imageId, full: new Blob(['full'], { type: 'image/jpeg' }), thumbnail: new Blob(['thumb'], { type: 'image/jpeg' }), width: 1200, height: 800 },
     });
     expect(await db.images.get(imageId)).toMatchObject({ id: imageId, remote: false, width: 1200 });
     const operations = await db.outbox.orderBy('sequence').toArray();

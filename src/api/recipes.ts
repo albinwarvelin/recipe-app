@@ -180,33 +180,33 @@ export async function pushOperations(operations: SyncOperation[]): Promise<SyncR
 
 export interface UploadedImage {
   id: string;
-  content_type: 'image/webp';
+  content_type: 'image/jpeg';
   width: number;
   height: number;
   byte_size: number;
   created_at: string;
 }
 
-export async function uploadImage(imageId: string, blob: Blob, width: number, height: number, operationId: string): Promise<UploadedImage> {
+export async function uploadImage(imageId: string, full: Blob, thumbnail: Blob, operationId: string): Promise<UploadedImage> {
+  const body = new FormData();
+  body.append('full', full, 'full.jpg');
+  body.append('thumbnail', thumbnail, 'thumbnail.jpg');
   return (await api<{ image: UploadedImage }>(`/api/images/${imageId}`, {
     method: 'PUT',
     headers: {
-      'Content-Type': 'image/webp',
       'X-Requested-With': 'RecipeApp',
       'Idempotency-Key': operationId,
-      'X-Image-Width': String(width),
-      'X-Image-Height': String(height),
     },
-    body: blob,
+    body,
   })).image;
 }
 
-export async function downloadImage(imageId: string): Promise<Blob> {
-  const response = await fetch(`/api/images/${imageId}`, { credentials: 'same-origin', redirect: 'manual' });
+export async function downloadImage(imageId: string, variant: 'full' | 'thumbnail'): Promise<Blob> {
+  const response = await fetch(`/api/images/${imageId}/${variant}`, { credentials: 'same-origin', redirect: 'manual' });
   if ((response.type as string) === 'opaqueredirect' || response.status === 0 || response.status === 302 || response.status === 401 || response.status === 403) {
     throw new AuthenticationRequiredError();
   }
-  if (!response.ok || response.headers.get('Content-Type')?.split(';')[0] !== 'image/webp') {
+  if (!response.ok || response.headers.get('Content-Type')?.split(';')[0] !== 'image/jpeg') {
     throw new ApiError(response.status, `Bilden kunde inte hämtas (${response.status}).`);
   }
   return response.blob();

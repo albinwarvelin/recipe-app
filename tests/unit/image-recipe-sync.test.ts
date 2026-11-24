@@ -27,7 +27,7 @@ let requestBodies = new Map<string, string>();
 
 async function withImage(recipeDraft = draft) {
   return saveLocalRecipe(null, recipeDraft, { kind: 'replace', image: {
-    id: crypto.randomUUID(), full: new Blob(['full'], { type: 'image/webp' }), thumbnail: new Blob(['thumb'], { type: 'image/webp' }), width: 100, height: 100,
+    id: crypto.randomUUID(), full: new Blob(['full'], { type: 'image/jpeg' }), thumbnail: new Blob(['thumb'], { type: 'image/jpeg' }), width: 100, height: 100,
   } });
 }
 
@@ -41,7 +41,7 @@ beforeEach(async () => {
       if (init?.method === 'DELETE') return Response.json({ error: { code: 'NOT_FOUND' } }, { status: 404 });
       uploads++;
       return imageStatus >= 400 ? Response.json({ error: { code: 'INVALID_IMAGE', requestId: 'image-request-123' } }, { status: imageStatus })
-        : Response.json({ image: { id: path.split('/').at(-1), content_type: 'image/webp' } });
+        : Response.json({ image: { id: path.split('/').at(-1), content_type: 'image/jpeg' } });
     }
     if (path === '/api/sync') {
       const body = JSON.parse(String(init?.body));

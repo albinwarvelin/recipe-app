@@ -42,9 +42,9 @@ describe('remote import image security', () => {
     expect(isForbiddenIpAddress('2606:4700:4700::1111')).toBe(false);
   });
 
-  it('downloads the query-string image URL that exposed the edge redirect-mode bug', async () => {
+  it('downloads an image URL with query parameters using manual redirects', async () => {
     const response = await importImageRoute(
-      jsonRequest('https://www.einfachbacken.de/sites/einfachbacken.de/files/styles/1_1/public/2021-08/cookies_2.jpg?h=4521fff0&itok=8rCicB6j'),
+      jsonRequest('https://images.example.org/sample.jpg?size=720&token=example'),
       { PRODUCTION_HOSTNAME: 'recipes.test' },
       crypto.randomUUID(),
       publicImageFetcher(),

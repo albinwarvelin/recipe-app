@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
 import { Link } from 'react-router';
 import type { LocalRecipe } from '../data/db';
-import { ensureFullImage } from '../sync/coordinator';
 import { AppToolbar } from './AppToolbar';
 import { ArrowLeftIcon, CalendarIcon, EditIcon, TrashIcon } from './Icons';
 import { RecipeImage } from './RecipeImage';
@@ -14,7 +12,6 @@ function safeWebUrl(value: string | null): string | null {
 }
 
 export function RecipeDetail({ recipe, backTo, onDelete, onPlan }: { recipe: LocalRecipe; backTo: string; onDelete: () => void; onPlan?: () => void }) {
-  useEffect(() => { if (recipe.image_key && navigator.onLine) void ensureFullImage(recipe.image_key).catch(() => undefined); }, [recipe.image_key]);
   const minutes = (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0);
   const sourceUrl = safeWebUrl(recipe.source_url);
   return <div className="detail-page">

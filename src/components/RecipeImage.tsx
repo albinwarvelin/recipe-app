@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useImageUrl } from '../images/use-image-url';
-import { ensureThumbnailImage } from '../sync/coordinator';
+import { ensureImage } from '../images/cache';
+import { AuthenticationRequiredError } from '../api/recipes';
 
 export function RecipeImage({ imageId, alt, full = false, fallback }: {
   imageId: string | null | undefined;
@@ -9,32 +10,26 @@ export function RecipeImage({ imageId, alt, full = false, fallback }: {
   fallback?: ReactNode;
 }) {
   const source = useImageUrl(imageId, full);
-  const [displayedSource, setDisplayedSource] = useState(source);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!full && imageId && !source && navigator.onLine) void ensureThumbnailImage(imageId).catch(() => undefined);
-  }, [full, imageId, source]);
-
-  useEffect(() => {
-    if (!source) {
-      setDisplayedSource(null);
-      return;
-    }
-    if (!displayedSource || displayedSource === source) {
-      setDisplayedSource(source);
-      return;
-    }
-
     let active = true;
-    const image = new Image();
-    image.src = source;
-    const show = () => { if (active) setDisplayedSource(source); };
-    if (typeof image.decode === 'function') void image.decode().then(show, show);
-    else image.onload = show;
-    return () => { active = false; };
-  }, [displayedSource, source]);
+    setError(null);
+    const load = () => {
+      if (!imageId || !navigator.onLine) return;
+      void ensureImage(imageId, full ? 'full' : 'thumbnail', attempt > 0).then(
+        () => { if (active) setError(null); },
+        (cause) => { if (active) setError(cause instanceof AuthenticationRequiredError ? 'Logga in för att hämta bilden.' : 'Bilden kunde inte hämtas.'); },
+      );
+    };
+    load();
+    window.addEventListener('online', load);
+    return () => { active = false; window.removeEventListener('online', load); };
+  }, [full, imageId, attempt]);
 
-  return displayedSource
-    ? <img src={displayedSource} alt={alt} loading="eager" decoding="async" />
-    : fallback;
+  return <>
+    {source ? <img src={source} alt={alt} loading="eager" decoding="async" onError={() => setError('Bilden kunde inte visas.')} /> : fallback}
+    {error && <span className="image-load-error" role="status">{error}{full && <button type="button" onClick={() => setAttempt((value) => value + 1)}>Försök igen</button>}</span>}
+  </>;
 }

@@ -1,22 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { webpDimensions } from '../../worker/routes/images';
+import { jpegDimensions } from '../../shared/images';
+import { jpegBytes, jpegFrame } from '../fixtures/jpeg';
 
-function vp8x(width: number, height: number): ArrayBuffer {
-  const bytes = new Uint8Array(30);
-  bytes.set([82, 73, 70, 70], 0); // RIFF
-  bytes.set([87, 69, 66, 80], 8); // WEBP
-  bytes.set([86, 80, 56, 88], 12); // VP8X
-  const write24 = (offset: number, value: number) => { bytes[offset] = value & 255; bytes[offset + 1] = (value >> 8) & 255; bytes[offset + 2] = (value >> 16) & 255; };
-  write24(24, width - 1); write24(27, height - 1);
-  return bytes.buffer;
-}
-
-describe('WebP content validation', () => {
-  it('reads dimensions from VP8X content rather than trusting a filename', () => {
-    expect(webpDimensions(vp8x(1600, 900))).toEqual({ width: 1600, height: 900 });
+describe('JPEG header validation', () => {
+  it('reads a real JPEG and its frame dimensions', () => {
+    expect(jpegDimensions(jpegBytes().buffer)).toEqual({ width: 1, height: 1 });
+    expect(jpegDimensions(jpegFrame(1600, 900).buffer)).toEqual({ width: 1600, height: 900 });
   });
 
-  it('rejects non-WebP content', () => {
-    expect(webpDimensions(new TextEncoder().encode('not an image').buffer as ArrayBuffer)).toBeNull();
+  it('rejects non-JPEG, truncated segments and missing end markers', () => {
+    expect(jpegDimensions(new TextEncoder().encode('not an image').buffer)).toBeNull();
+    expect(jpegDimensions(jpegBytes().slice(0, -2).buffer)).toBeNull();
+    const broken = jpegBytes(); broken[4] = 255; broken[5] = 255;
+    expect(jpegDimensions(broken.buffer)).toBeNull();
+    expect(jpegDimensions(jpegFrame(0, 1).buffer)).toBeNull();
   });
 });

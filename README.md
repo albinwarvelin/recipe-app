@@ -4,7 +4,7 @@ Private, single-user, local-first recipe PWA on Cloudflare Workers, D1, and R2.
 
 ## Current status
 
-The app has a card-based responsive frontend, dedicated recipe views/editors, Dexie persistence, durable local-first writes, dependency-aware synchronization, manual conflict resolution, and an Access-aware offline shell. Cover photos support JPEG, PNG, WebP, HEIC, and HEIF input; the browser strips metadata and stores normalized WebP in a private EU-jurisdiction R2 bucket. Safari uses an on-device WebAssembly encoder in a background worker when native canvas WebP encoding is unavailable. Local thumbnails use JPEG so downloaded covers can be displayed without a WebP encoder.
+The app has a card-based responsive frontend, dedicated recipe views/editors, Dexie persistence, durable local-first writes, dependency-aware synchronization, manual conflict resolution, and an Access-aware offline shell. Cover photos accept JPEG, PNG, WebP, HEIC, and HEIF input. The device prepares a JPEG cover (maximum 2560-pixel edge) and JPEG thumbnail (720-pixel edge) once, removes source metadata, and saves both locally before synchronization. Both variants are stored in private EU-jurisdiction R2 and downloaded directly by other devices. Native HEIC decoding is tried first; one lazy decoder handles unsupported browsers. No image-transformation service is used.
 
 Cloudflare Access protects the complete `workers.dev` deployment with email one-time PIN login, and the Worker independently validates every API request before reading D1 or R2. Once opened successfully, cached recipes and thumbnails remain usable offline. Unsynchronized writes are never discarded after retry or authentication failure.
 
@@ -14,7 +14,7 @@ Production: `https://recipe-app-api.albin-warvelin.workers.dev/`
 
 - `src/` — React/Vite PWA, Dexie repositories, image processing, and synchronization coordinator.
 - `worker/` — Cloudflare Worker authentication, validation, routes, D1 data layer, and private R2 image streaming.
-- `migrations/` — append-only D1 migrations.
+- `migrations/` — D1 database schema.
 - `tests/` — Node security/local-first tests and Workers-runtime D1/R2 tests.
 - `agent_docs/` — project requirements and architecture guidance.
 

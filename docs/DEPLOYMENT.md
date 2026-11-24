@@ -43,7 +43,7 @@ npm run build
 npx wrangler deploy
 ```
 
-Never edit a migration already applied remotely; add the next numbered migration. After deployment, verify while signed out that `/` and `/api/session` redirect to Access, then sign in and exercise offline creation, reconnect/sync, cover upload, edit, favorite, deletion, and a two-client version conflict. Confirm that a previously opened app launches offline and renders IndexedDB data.
+Verify that the target database matches the current schema before deploying schema-dependent code. After deployment, verify while signed out that `/` and `/api/session` redirect to Access, then sign in and exercise offline creation, reconnect/sync, cover upload, edit, favorite, deletion, and a two-client version conflict. Confirm that a previously opened app launches offline and renders IndexedDB data.
 
 The optional example library is stored in `scripts/seed-example-recipes.sql`. It uses fixed UUIDs and `INSERT OR IGNORE`, so `npx wrangler d1 execute recipe-app --remote --file scripts/seed-example-recipes.sql` is safe to rerun without duplicating the four recipes. Every example has `source_name = 'Recipe App examples'` and an `Example` tag.
 

@@ -1,10 +1,10 @@
-import { ApiError, AuthenticationRequiredError, downloadImage, getChanges, getIngredientCatalog, getTags, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
+import { ApiError, AuthenticationRequiredError, getChanges, getIngredientCatalog, getTags, pushOperations, removeImage, uploadImage, type Recipe, type RecipeDraft, type SyncOperation, type SyncResult } from '../api/recipes';
 import { getPlanningChanges, pushPlanningOperations, type PlanningSyncResult } from '../api/planning';
 import type { PlanningEntity, PlanningEntityType, PlanningOperation } from '../../shared/planning';
 import { normalizeIdentityValue } from '../data/normalize';
 import { db, type LocalManualShoppingItem, type LocalMealPlanEntry, type LocalRecipe, type LocalShoppingCheckState, type OutboxOperation, type PlanningOutboxOperation, type RecipeConflict } from '../data/db';
 import { sanitizeRecipeDraft } from '../data/local-recipes';
-import { thumbnailFromWebp } from '../images/process';
+import { ensureImage, pruneFullImageCache } from '../images/cache';
 import { canAttemptOperation, failureDispositionForStatus } from './failure-policy';
 import { createCoalescedRunner } from './coalesced-runner';
 import { deferRecipeCovers } from './deferred-covers';
@@ -18,16 +18,7 @@ export interface SyncSnapshot {
 
 let snapshot: SyncSnapshot = { phase: navigator.onLine ? 'idle' : 'offline', pending: 0, lastSync: null, message: null };
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
-const fullImageRequests = new Map<string, Promise<void>>();
-const thumbnailImageRequests = new Map<string, Promise<void>>();
 const listeners = new Set<(next: SyncSnapshot) => void>();
-
-async function pruneFullImageCache(): Promise<void> {
-  const cached = (await db.images.toArray())
-    .filter((image) => image.remote && image.full_blob)
-    .sort((left, right) => right.last_accessed_at.localeCompare(left.last_accessed_at));
-  for (const image of cached.slice(20)) await db.images.update(image.id, { full_blob: undefined });
-}
 
 function publish(patch: Partial<SyncSnapshot>): void {
   snapshot = { ...snapshot, ...patch };
@@ -175,8 +166,8 @@ async function processEntry(entry: OutboxOperation): Promise<boolean> {
   try {
     if (entry.type === 'image-upload') {
       const image = await db.images.get(entry.entity_id);
-      if (!image?.full_blob) { await markFailed(entry, 'LOCAL_IMAGE_MISSING', 'permanent'); return true; }
-      const uploaded = await uploadImage(image.id, image.full_blob, image.width, image.height, entry.operation_id);
+      if (!image?.full_blob || !image.thumbnail_blob) { await markFailed(entry, 'LOCAL_IMAGE_MISSING', 'permanent'); return true; }
+      const uploaded = await uploadImage(image.id, image.full_blob, image.thumbnail_blob, entry.operation_id);
       if (uploaded?.id !== image.id) throw new ApiError(502, apiErrorMessage(502, 'INVALID_RESPONSE'), undefined, undefined, 'INVALID_RESPONSE');
       await db.transaction('rw', db.images, db.outbox, async () => {
         await db.images.update(image.id, { remote: true });
@@ -336,50 +327,6 @@ async function processPlanningOutbox(): Promise<void> {
   }
 }
 
-async function cacheThumbnail(imageId: string): Promise<void> {
-  const existing = await db.images.get(imageId);
-  if (existing?.thumbnail_blob) return;
-  const full = existing?.full_blob ?? await downloadImage(imageId);
-  const thumbnail = await thumbnailFromWebp(full);
-  const timestamp = new Date().toISOString();
-  const bitmap = await createImageBitmap(full);
-  const width = bitmap.width; const height = bitmap.height; bitmap.close();
-  await db.images.put({ ...existing, id: imageId, thumbnail_blob: thumbnail, width, height, byte_size: full.size, remote: true, created_at: existing?.created_at ?? timestamp, last_accessed_at: timestamp });
-}
-
-export function ensureThumbnailImage(imageId: string): Promise<void> {
-  const active = thumbnailImageRequests.get(imageId);
-  if (active) return active;
-  const request = cacheThumbnail(imageId).finally(() => thumbnailImageRequests.delete(imageId));
-  thumbnailImageRequests.set(imageId, request);
-  return request;
-}
-
-async function downloadFullImage(imageId: string): Promise<void> {
-  const existing = await db.images.get(imageId);
-  if (existing?.full_blob) {
-    await db.images.update(imageId, { last_accessed_at: new Date().toISOString() });
-    return;
-  }
-  const full = await downloadImage(imageId);
-  if (existing) await db.images.update(imageId, { full_blob: full, byte_size: full.size, last_accessed_at: new Date().toISOString() });
-  else {
-    const thumbnail = await thumbnailFromWebp(full);
-    const bitmap = await createImageBitmap(full); const width = bitmap.width; const height = bitmap.height; bitmap.close();
-    const timestamp = new Date().toISOString();
-    await db.images.put({ id: imageId, full_blob: full, thumbnail_blob: thumbnail, width, height, byte_size: full.size, remote: true, created_at: timestamp, last_accessed_at: timestamp });
-  }
-  await pruneFullImageCache();
-}
-
-export function ensureFullImage(imageId: string): Promise<void> {
-  const active = fullImageRequests.get(imageId);
-  if (active) return active;
-  const request = downloadFullImage(imageId).finally(() => fullImageRequests.delete(imageId));
-  fullImageRequests.set(imageId, request);
-  return request;
-}
-
 async function applyServerRecipe(server: Recipe, sequence: number): Promise<void> {
   const local = await db.recipes.get(server.id);
   const operations = await db.outbox.where('entity_id').equals(server.id).toArray();
@@ -395,7 +342,7 @@ async function applyServerRecipe(server: Recipe, sequence: number): Promise<void
       local_version: local?.local_version ?? 0, sync_status: cover ? local?.sync_status ?? 'pending' : 'synced' });
   }
   await db.syncMetadata.put({ key: 'change_cursor', value: sequence });
-  if (server.image_key) await ensureThumbnailImage(server.image_key).catch(() => undefined);
+  if (server.image_key) await ensureImage(server.image_key, 'thumbnail').catch(() => undefined);
 }
 
 async function pullChanges(): Promise<void> {

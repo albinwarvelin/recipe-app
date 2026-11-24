@@ -12,7 +12,7 @@ export function applySecurityHeaders(response: Response, origin?: string): Respo
   headers.set('Allow', methods);
   if (origin) headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', methods);
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Cf-Access-Jwt-Assertion, Idempotency-Key, X-Requested-With, X-Image-Width, X-Image-Height');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Cf-Access-Jwt-Assertion, Idempotency-Key, X-Requested-With');
   headers.set('Vary', 'Origin');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

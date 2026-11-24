@@ -16,15 +16,16 @@ All `/api/*` routes require a verified Cloudflare Access JWT and approved owner 
 - `POST /api/tags`
 - `GET /api/sync/changes?cursor=0&limit=100`
 - `POST /api/sync`
-- `PUT /api/images/:id` — validated normalized WebP upload
-- `GET /api/images/:id` — authenticated private image stream
+- `PUT /api/images/:id` — validated JPEG cover and thumbnail pair
+- `GET /api/images/:id/full` — authenticated cover stream
+- `GET /api/images/:id/thumbnail` — authenticated thumbnail stream
 - `DELETE /api/images/:id` — removes an unreferenced image
 
 Recipe responses contain ordered ingredients, ordered instructions, tags, and an optional `image_key`. A supplied child/tag array replaces that collection. Tags are unique case-insensitively while retaining the first stored display casing.
 
 ## Write contract
 
-Every JSON write requires `Content-Type: application/json`, `X-Requested-With: RecipeApp`, an `Idempotency-Key` UUID, and a same-origin or configured `Origin`. Image writes use their documented WebP content type instead of JSON.
+Every JSON write requires `Content-Type: application/json`, `X-Requested-With: RecipeApp`, an `Idempotency-Key` UUID, and a same-origin or configured `Origin`. Image writes use multipart form data instead of JSON.
 
 Update, replacement, and delete bodies require `base_version`. A stale version returns `409 VERSION_CONFLICT` with `error.details.current`, and nothing is overwritten. DELETE uses a JSON body: `{ "base_version": 3 }`.
 
@@ -44,10 +45,8 @@ Operations execute sequentially and each result includes its own status/body. Ea
 
 ## Images
 
-`PUT /api/images/:id` accepts at most 6 MB with `Content-Type: image/webp`, `X-Image-Width`, and `X-Image-Height`. The browser converts JPEG, PNG, WebP, HEIC, or HEIF input into a normalized WebP up to 2560 px on the long edge and keeps a 720 px thumbnail in IndexedDB for offline cards. The Worker verifies the RIFF/WebP signature and dimensions from the bytes, generates the R2 object path from the UUID, records a SHA-256 checksum, and writes metadata to D1. Raw filenames, original uploads, and image metadata never reach R2.
+`PUT /api/images/:id` accepts exactly two multipart file fields: `full` (JPEG, maximum 6 MB and 2560-pixel edge) and `thumbnail` (JPEG, maximum 512 KB and 720-pixel edge). Dimensions are read from the JPEG frame headers; the thumbnail must match the cover's proportions and expected size. The request body is bounded before multipart parsing. Native browser decoding and JPEG encoding prepare both variants once, with HEIC decoding loaded only when native decoding fails. Transparent inputs are flattened onto white.
+
+An image ID identifies one immutable pair. The Worker reserves it in D1, stores `covers/:id/full.jpg` and `covers/:id/thumbnail.jpg`, and activates the record with the processed-operation acknowledgement only after both writes succeed. The stored checksum identifies both files. Incomplete uploads remain unavailable until a retry completes the pair. Original filenames are ignored. Other devices download and cache the requested variant directly; displaying an image never requires conversion.
 
 The R2 bucket is private and EU-jurisdiction restricted. Reads stream through the authenticated Worker with private caching, ETag, `nosniff`, and same-origin protections. An image cannot be deleted while an active recipe references it.
-
-## Deliberately excluded for now
-
-URL scraping and JSON import/export remain deliberately excluded.

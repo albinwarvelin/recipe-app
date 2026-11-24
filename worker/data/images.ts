@@ -1,7 +1,7 @@
 export interface ImageRow {
   id: string;
   object_key: string;
-  content_type: 'image/webp';
+  content_type: 'image/jpeg';
   width: number;
   height: number;
   byte_size: number;

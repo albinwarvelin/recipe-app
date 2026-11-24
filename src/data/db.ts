@@ -15,7 +15,7 @@ export interface LocalRecipe extends Recipe {
 export interface LocalImage {
   id: string;
   full_blob?: Blob;
-  thumbnail_blob: Blob;
+  thumbnail_blob?: Blob;
   width: number;
   height: number;
   byte_size: number;
