@@ -202,7 +202,7 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
   ];
 
   return <div className="app-shell">
-    <header className="navigation-bar">
+    <header className="navigation-bar library-header">
       <div className="navigation-bar-inner page-container">
         <div className="library-title"><p className="text-eyebrow">Privat kök</p><h1 className="heading-1">Recept</h1></div>
         <div className="header-actions"><SyncIndicator state={sync} onClick={() => setShowSyncProblems(true)} /><div className="menu-wrap" data-popover-root><button className="menu-button" type="button" aria-label="Öppna meny" aria-expanded={openPopover === 'app'} onClick={() => togglePopover('app')}><MoreIcon /></button>{openPopover === 'app' && <div className="app-menu"><button type="button" onClick={() => { setOpenPopover(null); void syncNow(); }}>Synkronisera nu</button><Link to="/settings" onClick={() => setOpenPopover(null)}>Inställningar</Link><a href="/cdn-cgi/access/logout">Logga ut</a></div>}</div></div>

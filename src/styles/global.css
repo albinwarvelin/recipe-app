@@ -457,6 +457,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .conflict-field-heading { align-items: stretch; flex-direction: column; }
   .conflict-values { grid-template-columns: 1fr; }
 }
+/* iOS PWA blur trial: remove this block to restore the scrolling library header. */
+@media (max-width: 650px) and (display-mode: standalone) {
+  .library-header { position: sticky; }
+}
 @media (max-width: 390px) {
   .recipe-grid { grid-template-columns: 1fr; }
   .recipe-cover { aspect-ratio: 16 / 10; }
