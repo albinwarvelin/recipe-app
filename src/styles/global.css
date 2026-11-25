@@ -38,7 +38,7 @@ h1, h2, h3, p { margin: 0; }
 .text-caption { color: var(--muted); font-size: .75rem; line-height: 1.35; }
 .text-eyebrow, .eyebrow { margin: 0 0 .35rem; color: var(--muted); font-size: .6875rem; font-weight: 750; line-height: 1.35; letter-spacing: .14em; text-transform: uppercase; }
 
-.navigation-bar { position: sticky; z-index: 30; top: 0; width: 100%; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line-soft); backdrop-filter: blur(18px); }
+.navigation-bar { position: sticky; z-index: 30; top: 0; width: 100%; background: #fff; border-bottom: 1px solid var(--line-soft); }
 .navigation-bar-inner { display: flex; align-items: center; justify-content: space-between; min-height: 84px; padding-top: calc(.75rem + env(safe-area-inset-top)); padding-bottom: .75rem; }
 .header-actions { display: flex; align-items: center; gap: .55rem; }
 .sync-indicator { display: flex; align-items: center; gap: .4rem; min-height: 32px; color: var(--muted); font-size: .78rem; }
@@ -141,7 +141,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .import-instruction-details textarea { color: #344054; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .78rem; line-height: 1.5; }
 .import-submit { width: 100%; min-height: 50px; }
 .editor-page { min-height: 100vh; background: #f5f7fb; }
-.app-toolbar { position: sticky; z-index: 30; top: 0; width: 100%; border-bottom: 1px solid var(--line-soft); background: rgba(255,255,255,.96); backdrop-filter: blur(18px); }
+.app-toolbar { position: sticky; z-index: 30; top: 0; width: 100%; border-bottom: 1px solid var(--line-soft); background: #fff; }
 .app-toolbar-inner { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; min-height: calc(64px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
 .app-toolbar-title { grid-column: 2; overflow: hidden; max-width: min(42vw, 440px); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .app-toolbar-slot { display: flex; align-items: center; gap: .4rem; min-width: 0; }
@@ -151,21 +151,35 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .nav-button svg, .button-quiet svg, .section-action svg { display: block; flex: 0 0 auto; }
 .nav-button-primary { min-height: 40px; border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .nav-button-danger, .button-danger { color: var(--danger); }
-.detail-main { padding-top: 1.5rem; padding-bottom: 5rem; }
-.detail-cover { position: relative; overflow: hidden; width: min(980px, 100%); aspect-ratio: 16 / 8; margin: auto; border-radius: 20px; background: #eaf0f9; }
+.detail-main { padding-top: 1.25rem; padding-bottom: 3rem; }
+.detail-cover { position: relative; overflow: hidden; width: min(980px, 100%); aspect-ratio: 16 / 5; max-height: 260px; margin: auto; border-radius: 14px; background: #eaf0f9; }
 .detail-cover > img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.detail-content { width: min(760px, 100%); margin: auto; padding: 2rem 0; }
-.detail-content h1 { margin-bottom: .7rem; }
-.detail-description { color: var(--muted); }
-.detail-facts { display: flex; gap: 1.5rem; margin: 1.5rem 0; }
-.detail-facts span { display: grid; color: var(--muted); font-size: .78rem; }
-.detail-facts strong { color: var(--ink); font-size: 1.2rem; }
-.detail-plan-button { margin-bottom: .35rem; }
-.detail-content section { margin-top: 2.2rem; }
-.detail-content section > h2 { margin-bottom: 1rem; }
-.ingredient-list { padding: 0; list-style: none; }
-.ingredient-list li { display: grid; grid-template-columns: minmax(80px, 30%) 1fr; gap: 1rem; padding: .75rem 0; border-bottom: 1px solid var(--line-soft); }
-.ingredient-list li span { color: var(--muted); }
+.detail-content { width: min(980px, 100%); margin: auto; padding: 1.25rem 0; }
+.detail-content h1 { margin-bottom: .6rem; font-size: clamp(1.65rem, 3vw, 2.25rem); line-height: 1.15; overflow-wrap: anywhere; }
+.detail-description { margin-top: .65rem; color: var(--muted); }
+.detail-source { margin-top: .5rem; }
+.detail-meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1rem; }
+.detail-facts { display: flex; flex-wrap: wrap; gap: .35rem 1rem; color: var(--muted); font-size: .875rem; }
+.detail-facts strong { color: var(--ink); font-weight: 650; }
+.detail-plan-button { min-height: 36px; margin-left: auto; padding: .35rem .65rem; font-size: .8125rem; }
+.detail-sections { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 2.75rem; margin-top: 1.25rem; }
+.detail-sections section { min-width: 0; scroll-margin-top: calc(90px + env(safe-area-inset-top)); }
+.detail-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .25rem .75rem; margin-bottom: .5rem; }
+.detail-section-heading a { display: inline-flex; align-items: center; min-height: 32px; color: var(--muted); font-size: .8125rem; text-decoration: none; }
+.detail-directions section + section { margin-top: 1.75rem; }
+.detail-directions section > h2 { margin-bottom: .9rem; }
+.ingredient-list { margin: 0; padding: 0; list-style: none; }
+.ingredient-group-heading { margin: .9rem 0 .35rem; color: var(--muted); font-size: .75rem; font-weight: 650; line-height: 1.4; letter-spacing: .045em; text-transform: uppercase; }
+.ingredient-list > li:first-child .ingredient-group-heading { margin-top: .15rem; }
+.ingredient-row { display: flex; align-items: flex-start; gap: .65rem; min-height: 36px; padding: .35rem 0; cursor: pointer; }
+.ingredient-check { position: relative; display: grid; place-items: center; flex: 0 0 21px; width: 21px; height: 21px; margin-top: 1px; }
+.ingredient-check input { appearance: none; -webkit-appearance: none; width: 21px; height: 21px; margin: 0; border: 1.5px solid #c5c9d0; border-radius: 50%; background: #fff; cursor: pointer; }
+.ingredient-check input:checked { border-color: var(--ink); background: var(--ink); }
+.ingredient-check input:focus-visible { outline: 3px solid #84adff; outline-offset: 3px; }
+.ingredient-check svg { position: absolute; color: #fff; pointer-events: none; visibility: hidden; }
+.ingredient-check input:checked + svg { visibility: visible; }
+.ingredient-text { min-width: 0; font-size: 1rem; line-height: 1.4; overflow-wrap: anywhere; }
+.ingredient-row.is-checked .ingredient-text { color: var(--muted); text-decoration: line-through; }
 .instruction-list { padding: 0; list-style: none; }
 .instruction-list li { display: grid; grid-template-columns: 36px 1fr; gap: .75rem; margin-bottom: 1rem; }
 .instruction-list li > span, .instruction-editor-row > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-dark); font-weight: 700; }
@@ -382,7 +396,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .cover-preview { grid-column: 1; grid-row: 1 / 4; border-block: 0; border-right: 1px solid var(--line-soft); }
   .cover-card .cover-actions { align-self: center; grid-column: 2; grid-row: 2; margin-top: 0; }
   .cover-card .field-help { grid-column: 2; grid-row: 3; }
-  .detail-content { padding-inline: 1rem; }
+  .detail-sections { grid-template-columns: 1fr; gap: 1.75rem; }
 }
 @media (max-width: 650px) {
   .navigation-bar, .app-toolbar { position: relative; background: #fff; backdrop-filter: none; }
@@ -412,8 +426,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .recipe-card-body { padding: .75rem; }
   .recipe-card h2 { font-size: 1.02rem; }
   .recipe-card-body > p, .recipe-facts span:nth-child(3), .recipe-card .tag-list { display: none; }
-  .detail-main { padding-inline: 0; padding-top: 0; }
-  .detail-cover { border-radius: 0; aspect-ratio: 4 / 3; }
+  .detail-main { padding-inline: 1rem; padding-top: .65rem; }
+  .detail-cover { border-radius: 12px; aspect-ratio: 3 / 1; max-height: 144px; }
+  .detail-content { padding-top: 1rem; }
+  .detail-page .app-toolbar { position: sticky; }
+  .detail-sections { margin-top: 1rem; }
+  .ingredient-text { font-size: 1.0625rem; }
   .app-toolbar-inner { min-height: calc(48px + env(safe-area-inset-top)); padding-inline: .65rem; }
   .app-toolbar-title.hide-on-mobile { display: none; }
   .nav-button { padding-inline: .55rem; }
