@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { RecipeDraft } from '../api/recipes';
 import { ConflictDialog } from '../components/ConflictDialog';
@@ -8,6 +8,7 @@ import { ingredientLabel } from '../components/IngredientCombobox';
 import { JsonImport } from '../components/JsonImport';
 import { PlanRecipeSheet } from '../components/PlanRecipeSheet';
 import { CheckIcon, ChevronDownIcon, CloseIcon, MoreIcon, PlusIcon, SearchIcon, StarIcon } from '../components/Icons';
+import { FilterDropdown } from '../components/FilterDropdown';
 import { RecipeCard } from '../components/RecipeCard';
 import { RecipeDetail } from '../components/RecipeDetail';
 import { RecipeEditor } from '../components/RecipeEditor';
@@ -24,7 +25,6 @@ import { PlannerPage } from './PlannerPage';
 import { ShoppingPage } from './ShoppingPage';
 import { installSyncTriggers, resolveConflictKeepLocal, resolveConflictKeepServer, syncNow } from '../sync/coordinator';
 
-type MatchMode = 'any' | 'all';
 type SortMode = 'updated' | 'title' | 'time';
 type OpenPopover = 'app' | 'create' | 'ingredients' | 'tags' | 'time' | 'sort' | null;
 const pullSyncThreshold = 58;
@@ -110,13 +110,9 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
   const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
   const [ingredientSearch, setIngredientSearch] = useState('');
   const [tagSearch, setTagSearch] = useState('');
-  const ingredientInput = useRef<HTMLInputElement>(null);
-  const tagInput = useRef<HTMLInputElement>(null);
   const query = params.get('q') ?? '';
   const ingredientIds = params.getAll('ingredient');
   const tagIds = params.getAll('tag');
-  const ingredientMode: MatchMode = params.get('ingredientMode') === 'all' ? 'all' : 'any';
-  const tagMode: MatchMode = params.get('tagMode') === 'all' ? 'all' : 'any';
   const favoritesOnly = params.get('favorite') === '1';
   const maxTime = Number(params.get('maxTime') ?? 0);
   const sort = (['updated', 'title', 'time'].includes(params.get('sort') ?? '') ? params.get('sort') : 'updated') as SortMode;
@@ -156,10 +152,10 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
       if (term && ![recipe.title, recipe.description, ...recipe.tags.map((tag) => tag.name), ...recipe.ingredients.map((item) => item.name)].some((value) => normalizeSearchValue(value).includes(term))) return false;
       const recipeIngredientIds = new Set(recipe.ingredients.flatMap((item) => item.catalog_id ? [item.catalog_id] : []));
       const ingredientMatches = ingredientIds.map((id) => recipeIngredientIds.has(id));
-      if (ingredientMatches.length && !(ingredientMode === 'all' ? ingredientMatches.every(Boolean) : ingredientMatches.some(Boolean))) return false;
+      if (!ingredientMatches.every(Boolean)) return false;
       const recipeTagIds = new Set(recipe.tags.flatMap((tag) => tag.id ? [tag.id] : []));
       const tagMatches = tagIds.map((id) => recipeTagIds.has(id));
-      if (tagMatches.length && !(tagMode === 'all' ? tagMatches.every(Boolean) : tagMatches.some(Boolean))) return false;
+      if (!tagMatches.every(Boolean)) return false;
       return true;
     });
     return list.sort((left, right) => sort === 'title'
@@ -167,7 +163,7 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
       : sort === 'time'
         ? ((left.prep_minutes ?? 0) + (left.cook_minutes ?? 0)) - ((right.prep_minutes ?? 0) + (right.cook_minutes ?? 0))
         : right.updated_at.localeCompare(left.updated_at));
-  }, [favoritesOnly, ingredientIds.join('|'), ingredientMode, maxTime, query, recipes, sort, tagIds.join('|'), tagMode]);
+  }, [favoritesOnly, ingredientIds.join('|'), maxTime, query, recipes, sort, tagIds.join('|')]);
 
   const ingredientAlternatives = useMemo(() => {
     const term = normalizeSearchValue(ingredientSearch);
@@ -219,34 +215,12 @@ function Library({ recipes, recipesStatus, catalog, tags }: { recipes: LocalReci
       <section className="library-controls">
         <label className="search-field"><SearchIcon /><input type="search" value={query} onChange={(event) => updateParam('q', event.target.value)} placeholder="Sök bland recept, ingredienser och taggar" aria-label="Sök recept" /></label>
         <div className="filter-toolbar">
-          <div className="filter-control ingredient-filter" data-popover-root>
-            <div className={`ingredient-filter-trigger ${openPopover === 'ingredients' ? 'is-open' : ''}`}>
-              <input ref={ingredientInput} type="search" value={ingredientSearch} onFocus={() => setOpenPopover('ingredients')} onChange={(event) => { setIngredientSearch(event.target.value); setOpenPopover('ingredients'); }} placeholder={ingredientIds.length ? `Ingredienser (${ingredientIds.length})` : 'Ingredienser'} aria-label="Sök och filtrera på ingredienser" aria-expanded={openPopover === 'ingredients'} aria-controls="ingredient-filter-options" />
-              <button type="button" aria-label="Visa ingredienser" onClick={() => {
-                if (openPopover === 'ingredients') { setOpenPopover(null); setIngredientSearch(''); }
-                else { setOpenPopover('ingredients'); requestAnimationFrame(() => ingredientInput.current?.focus()); }
-              }}><ChevronDownIcon className={openPopover === 'ingredients' ? 'is-rotated' : ''} /></button>
-            </div>
-            {openPopover === 'ingredients' && <div className="filter-popover ingredient-filter-popover" id="ingredient-filter-options">
-              <div className="mode-switch" aria-label="Matchning av ingredienser"><button type="button" className={ingredientMode === 'any' ? 'active' : ''} onClick={() => updateParam('ingredientMode', 'any')}>Någon</button><button type="button" className={ingredientMode === 'all' ? 'active' : ''} onClick={() => updateParam('ingredientMode', 'all')}>Alla</button></div>
-              <div className="filter-options">{ingredientAlternatives.length ? ingredientAlternatives.map(({ entry }) => <label key={entry.id}><input type="checkbox" checked={ingredientIds.includes(entry.id)} onChange={() => toggleList('ingredient', ingredientIds, entry.id)} /><span>{ingredientLabel(entry)}</span></label>) : <p className="filter-empty">Ingen ingrediens matchar.</p>}</div>
-            </div>}
-          </div>
-
-          <div className="filter-control tag-filter" data-popover-root>
-            <div className={`ingredient-filter-trigger ${openPopover === 'tags' ? 'is-open' : ''}`}>
-              <input ref={tagInput} type="search" value={tagSearch} onFocus={() => setOpenPopover('tags')} onChange={(event) => { setTagSearch(event.target.value); setOpenPopover('tags'); }} placeholder={tagIds.length ? `Taggar (${tagIds.length})` : 'Taggar'} aria-label="Sök och filtrera på taggar" aria-expanded={openPopover === 'tags'} aria-controls="tag-filter-options" />
-              <button type="button" aria-label="Visa taggar" onClick={() => {
-                if (openPopover === 'tags') { setOpenPopover(null); setTagSearch(''); }
-                else { setOpenPopover('tags'); requestAnimationFrame(() => tagInput.current?.focus()); }
-              }}><ChevronDownIcon className={openPopover === 'tags' ? 'is-rotated' : ''} /></button>
-            </div>
-            {openPopover === 'tags' && <div className="filter-popover tag-filter-popover" id="tag-filter-options">
-              <div className="mode-switch" aria-label="Matchning av taggar"><button type="button" className={tagMode === 'any' ? 'active' : ''} onClick={() => updateParam('tagMode', 'any')}>Någon</button><button type="button" className={tagMode === 'all' ? 'active' : ''} onClick={() => updateParam('tagMode', 'all')}>Alla</button></div>
-              <div className="filter-options">{tagAlternatives.length ? tagAlternatives.map((tag) => <label key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggleList('tag', tagIds, tag.id)} /><span>{tag.name}</span></label>) : <p className="filter-empty">Ingen tagg matchar.</p>}</div>
-            </div>}
-          </div>
-
+          <FilterDropdown id="ingredient" label="Ingredienser" count={ingredientIds.length} open={openPopover === 'ingredients'} onToggle={() => togglePopover('ingredients')} search={ingredientSearch} onSearch={setIngredientSearch}>
+            {ingredientAlternatives.length ? ingredientAlternatives.map(({ entry }) => <label key={entry.id}><input type="checkbox" checked={ingredientIds.includes(entry.id)} onChange={() => toggleList('ingredient', ingredientIds, entry.id)} /><span>{ingredientLabel(entry)}</span></label>) : <p className="filter-empty">Ingen ingrediens matchar.</p>}
+          </FilterDropdown>
+          <FilterDropdown id="tag" label="Taggar" count={tagIds.length} open={openPopover === 'tags'} onToggle={() => togglePopover('tags')} search={tagSearch} onSearch={setTagSearch}>
+            {tagAlternatives.length ? tagAlternatives.map((tag) => <label key={tag.id}><input type="checkbox" checked={tagIds.includes(tag.id)} onChange={() => toggleList('tag', tagIds, tag.id)} /><span>{tag.name}</span></label>) : <p className="filter-empty">Ingen tagg matchar.</p>}
+          </FilterDropdown>
           <button className={favoritesOnly ? 'filter-trigger filter-button favorite-filter active' : 'filter-trigger filter-button favorite-filter'} type="button" onClick={() => updateParam('favorite', favoritesOnly ? null : '1')}><StarIcon /><span>Favoriter</span></button>
 
           <div className="filter-control time-filter" data-popover-root><button className="filter-trigger filter-trigger-split" type="button" aria-expanded={openPopover === 'time'} onClick={() => togglePopover('time')}><span className="filter-trigger-label">Tid</span><span className="filter-current-value">{timeLabel}</span><ChevronDownIcon className={openPopover === 'time' ? 'is-rotated' : ''} /></button>{openPopover === 'time' && <div className="filter-popover filter-choice-popover">{[['', 'Alla'], ['15', 'Högst 15 min'], ['30', 'Högst 30 min'], ['60', 'Högst 60 min']].map(([value, label]) => <button key={value || 'all'} type="button" className="filter-choice" onClick={() => { updateParam('maxTime', value || null); setOpenPopover(null); }}><span>{label}</span>{String(maxTime || '') === value && <CheckIcon />}</button>)}</div>}</div>
